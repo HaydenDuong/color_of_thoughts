@@ -1,0 +1,136 @@
+:root {
+  font-family: system-ui, 'Segoe UI', Roboto, Ubuntu, sans-serif;
+  line-height: 1.5;
+  color: #e8e8ee;
+  background: #0a0a0f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.5rem clamp(1rem, 4vw, 2rem) 3rem;
+}
+
+.header h1 {
+  margin: 0 0 0.35rem;
+  font-size: clamp(1.35rem, 3vw, 1.75rem);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin: 0;
+  color: #a9a9b8;
+  font-size: 0.95rem;
+  max-width: 52ch;
+}
+
+.panel {
+  margin-top: 1.5rem;
+  padding: 1rem 0;
+}
+
+.file-input {
+  margin-top: 0.5rem;
+  font: inherit;
+  color: inherit;
+}
+
+.file-label {
+  display: inline-block;
+  font-weight: 600;
+}
+
+.status {
+  margin: 0.75rem 0 0;
+  color: #9ec5ff;
+}
+
+.error {
+  margin: 0.75rem 0 0;
+  color: #ffb4a8;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.column {
+  min-width: 0;
+}
+
+.preview-wrap {
+  margin: 0;
+  padding: 0.75rem;
+  background: #14141c;
+  border-radius: 12px;
+  border: 1px solid #24242e;
+}
+
+.preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.preview-wrap figcaption {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: #8c8c9a;
+}
+
+.sphere-wrap {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #24242e;
+  background: #12121a;
+}
+
+.meta {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #14141c;
+  border-radius: 12px;
+  border: 1px solid #24242e;
+  font-size: 0.92rem;
+}
+
+.meta p {
+  margin: 0.35rem 0;
+}
+
+.meta-label {
+  color: #9a9aa8;
+}
+
+.hex strong {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.hint {
+  margin-top: 0.75rem !important;
+  font-size: 0.85rem;
+  color: #8c8c9a;
+}
