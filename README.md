@@ -9,6 +9,13 @@ Living spec for the project: goals, agreed features, and technical notes. Update
 - **What it does:** file picker → **dominant color** from a **center crop** of the downscaled image → **3D sphere** + **hex / RGB / uniformity** text (uniformity is a heuristic for later “try better lighting” hints).
 - **Note:** color extraction runs **in the browser** for the fastest Phase 1 loop; the same math can move to a **Supabase Edge Function** later without changing the UI much.
 
+### Database (Supabase)
+
+- **Schema file:** `supabase/migrations/20260411120000_initial_schema.sql` — `rooms`, `participants`, `submissions` (one color row per participant, upsert on re-upload), RLS for anon, seed room `default`, Realtime publication for wall updates.
+- **Apply:** paste that SQL in the Supabase **SQL Editor** and run, or use the Supabase CLI (`supabase db push`). Step-by-step: `supabase/README.md`.
+- **Env:** copy `web/.env.example` → `web/.env.local` and set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_DEFAULT_ROOM_ID` (**must match** the `rooms.id` row in your project, often the seeded default).
+- **App wiring:** after upload, the client **creates a `participants` row** once per browser+room (anonymous label + localStorage), then **upserts `submissions`** so repeat uploads update the same color row.
+
 ---
 
 ## Objective
@@ -129,7 +136,9 @@ You do **not** need to block on supervisor invites to make progress. Treat your 
 ## Open checklist (fill in as you go)
 
 - [ ] Stack locked (e.g. React + R3F + Supabase).
-- [ ] Schema: `participants` / `submissions` or unified upsert table + RLS policies.
+- [x] **Supabase migration applied** (`20260411120000_initial_schema.sql` via SQL Editor or CLI) — see `supabase/README.md`.
+- [x] **`web/.env.local`** + **`@supabase/supabase-js`**: upload flow inserts/upserts `participants` + `submissions` for the default room.
+- [x] Schema + RLS in Supabase (`rooms`, `participants`, `submissions`).
 - [ ] Edge function or API for upload + color + confidence.
 - [ ] Wall page: Realtime subscription + 3D scene test on exhibition hardware.
 - [ ] Upload page: QR target URL, participant bootstrap, accessibility copy.
@@ -144,3 +153,5 @@ You do **not** need to block on supervisor invites to make progress. Treat your 
 | 2026-04-10 | Initial README from agreed design discussion. |
 | 2026-04-10 | Added migration plan (personal GitHub/Supabase → team). |
 | 2026-04-10 | Phase 1 `web/` app: Vite + React + R3F, upload → dominant color → 3D sphere. |
+| 2026-04-11 | Supabase initial migration + `web/.env.example` + `supabase/README.md` (apply schema today). |
+| 2026-04-12 | Wired `web/` to Supabase: anonymous participant + submission upsert after color extraction. |
