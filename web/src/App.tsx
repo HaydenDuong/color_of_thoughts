@@ -1,4 +1,5 @@
 import { useCallback, useId, useState } from 'react'
+import { SiteNav } from './components/SiteNav'
 import { ColorSphere } from './components/ColorSphere'
 import {
   extractDominantColor,
@@ -95,6 +96,7 @@ export function App() {
 
   return (
     <div className="app">
+      <SiteNav />
       <header className="header">
         <h1>Color of Thoughts</h1>
         <p className="lede">

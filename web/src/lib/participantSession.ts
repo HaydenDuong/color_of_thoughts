@@ -41,3 +41,8 @@ export function saveStoredParticipant(
 ): void {
   localStorage.setItem(key(roomId), JSON.stringify(participant))
 }
+
+/** Removes the stored participant for this room (used when the DB row is stale). */
+export function clearStoredParticipant(roomId: string): void {
+  localStorage.removeItem(key(roomId))
+}

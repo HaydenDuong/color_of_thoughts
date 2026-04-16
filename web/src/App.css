@@ -173,3 +173,133 @@ body {
   border: 1px solid #6a3a2a;
   color: #ffc9bd;
 }
+
+.site-nav {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #24242e;
+}
+
+.site-nav-link {
+  color: #9ec5ff;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.site-nav-link:hover {
+  text-decoration: underline;
+}
+
+.site-nav-link.active {
+  color: #e8e8ee;
+  text-decoration: underline;
+}
+
+.wall-canvas-wrap {
+  margin-top: 0.5rem;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #24242e;
+}
+
+.wall-empty {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #14141c;
+  border-radius: 12px;
+  border: 1px solid #24242e;
+  color: #a9a9b8;
+}
+
+.wall-list {
+  margin-top: 1.25rem;
+}
+
+.wall-list-title {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+
+.wall-list-ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.wall-list-ul li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  padding: 0.35rem 0.5rem;
+  background: #14141c;
+  border-radius: 8px;
+  border: 1px solid #24242e;
+}
+
+.wall-swatch {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 4px;
+  border: 1px solid #3a3a48;
+  flex-shrink: 0;
+}
+
+.wall-name {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.wall-hex {
+  font-variant-numeric: tabular-nums;
+  color: #9a9aa8;
+  font-size: 0.82rem;
+}
+
+.qr-panel {
+  margin-top: 1rem;
+  padding: 1.5rem;
+  background: #14141c;
+  border-radius: 12px;
+  border: 1px solid #24242e;
+  text-align: center;
+  max-width: 420px;
+}
+
+.qr-code-box {
+  display: inline-block;
+  padding: 1rem;
+  background: #fff;
+  border-radius: 12px;
+  line-height: 0;
+}
+
+.qr-caption {
+  margin: 1rem 0 0.5rem;
+  font-weight: 600;
+}
+
+.qr-url {
+  margin: 0;
+  font-size: 0.82rem;
+  word-break: break-all;
+  text-align: left;
+}
+
+.qr-url-code {
+  display: block;
+  margin-top: 0.35rem;
+  padding: 0.5rem;
+  background: #0e0e14;
+  border-radius: 8px;
+  font-size: 0.78rem;
+}

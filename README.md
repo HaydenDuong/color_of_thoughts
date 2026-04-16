@@ -13,7 +13,8 @@ Living spec for the project: goals, agreed features, and technical notes. Update
 
 - **Source:** latest work is on the **personal GitHub** repo (push after Supabase wiring).
 - **Validated:** same browser **re-upload updates** the same `submissions` row; **new session** (e.g. incognito) creates a **new** `participants` + `submissions` row and a new anonymous display name.
-- **Still Phase 1:** exhibition **wall** page, **QR** to upload URL, optional **deploy**, optional **Edge** extraction—not required for the upload+DB milestone above.
+- **Routes:** **`/`** upload · **`/wall`** live multi-sphere wall (Realtime refetch on `submissions`) · **`/qr`** QR code to the same origin’s upload URL (for the big screen).
+- **Still Phase 1:** optional **deploy** (so QR uses a public URL), optional **Edge** extraction, **highlight “your” sphere** on phone vs neutral wall.
 
 ### Database (Supabase)
 
@@ -21,6 +22,7 @@ Living spec for the project: goals, agreed features, and technical notes. Update
 - **Apply:** paste that SQL in the Supabase **SQL Editor** and run, or use the Supabase CLI (`supabase db push`). Step-by-step: `supabase/README.md`.
 - **Env:** copy `web/.env.example` → `web/.env.local` and set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_DEFAULT_ROOM_ID` (**must match** the `rooms.id` row in your project, often the seeded default).
 - **App wiring:** after upload, the client **creates a `participants` row** once per browser+room (anonymous label + localStorage), then **upserts `submissions`** so repeat uploads update the same color row.
+- **Realtime (wall):** migration adds `submissions` to `supabase_realtime`. If live updates do not fire, confirm **Database → Publications / Replication** in the dashboard includes **`submissions`**.
 
 ---
 
@@ -147,8 +149,9 @@ You do **not** need to block on supervisor invites to make progress. Treat your 
 - [x] Schema + RLS in Supabase (`rooms`, `participants`, `submissions`).
 - [x] **Personal GitHub:** current code pushed (team org / migration later).
 - [ ] Edge function or API for upload + color + confidence.
-- [ ] Wall page: Realtime subscription + 3D scene test on exhibition hardware.
-- [ ] Upload flow: **QR** to public upload URL (participant + accessibility copy already in app for local use).
+- [x] **Wall** page (`/wall`): Realtime-driven refetch + multi-sphere 3D scene + text list.
+- [x] **QR** page (`/qr`): encodes current origin + base path → upload (`/`).
+- [ ] Upload flow: **public** URL via deploy so phones off-LAN can scan the same QR.
 - [ ] Deploy frontend (e.g. Vercel / Netlify) with `VITE_*` env vars.
 - [ ] Supervisor: GitHub repo + Supabase project access (or **migration** from personal → team when invites land).
 
@@ -164,3 +167,4 @@ You do **not** need to block on supervisor invites to make progress. Treat your 
 | 2026-04-11 | Supabase initial migration + `web/.env.example` + `supabase/README.md` (apply schema today). |
 | 2026-04-12 | Wired `web/` to Supabase: anonymous participant + submission upsert after color extraction. |
 | 2026-04-12 | README progress: validated re-upload vs new session; GitHub push noted; checklist updated (wall/QR/deploy still open). |
+| 2026-04-16 | Wall (`/wall`), QR (`/qr`), React Router, `react-router-dom` + `qrcode.react`. |

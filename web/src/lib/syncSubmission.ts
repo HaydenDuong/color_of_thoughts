@@ -3,41 +3,38 @@ import { generateAnonymousLabel } from './anonymousLabel'
 import {
   loadStoredParticipant,
   saveStoredParticipant,
+  clearStoredParticipant,
   type StoredParticipant,
 } from './participantSession'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-/**
- * Ensures a `participants` row exists (creates on first visit for this browser+room),
- * then upserts `submissions` so re-upload updates the same row (one orb per user).
- */
-export async function ensureParticipantAndUpsertSubmission(
+async function createParticipant(
   supabase: SupabaseClient,
   roomId: string,
-  color: DominantColorResult,
 ): Promise<StoredParticipant> {
-  let participant = loadStoredParticipant(roomId)
+  const id = crypto.randomUUID()
+  const displayName = generateAnonymousLabel()
 
-  if (!participant) {
-    const id = crypto.randomUUID()
-    const displayName = generateAnonymousLabel()
+  const { error } = await supabase.from('participants').insert({
+    id,
+    room_id: roomId,
+    display_name: displayName,
+    is_anonymous: true,
+  })
 
-    const { error: insertErr } = await supabase.from('participants').insert({
-      id,
-      room_id: roomId,
-      display_name: displayName,
-      is_anonymous: true,
-    })
+  if (error) throw new Error(error.message)
 
-    if (insertErr) {
-      throw new Error(insertErr.message)
-    }
+  const participant = { id, displayName }
+  saveStoredParticipant(roomId, participant)
+  return participant
+}
 
-    participant = { id, displayName }
-    saveStoredParticipant(roomId, participant)
-  }
-
-  const { error: upsertErr } = await supabase.from('submissions').upsert(
+async function upsertSubmission(
+  supabase: SupabaseClient,
+  participant: StoredParticipant,
+  color: DominantColorResult,
+): Promise<void> {
+  const { error } = await supabase.from('submissions').upsert(
     {
       participant_id: participant.id,
       r: color.r,
@@ -49,9 +46,37 @@ export async function ensureParticipantAndUpsertSubmission(
     { onConflict: 'participant_id' },
   )
 
-  if (upsertErr) {
-    throw new Error(upsertErr.message)
+  if (error) throw new Error(error.message)
+}
+
+/**
+ * Ensures a `participants` row exists (creates on first visit for this browser+room),
+ * then upserts `submissions` so re-upload updates the same row (one orb per user).
+ *
+ * Handles "stale localStorage" gracefully: if the stored participant_id no longer
+ * exists in the DB (e.g. after a database reset), the RLS/FK error on upsert is caught,
+ * the stale identity is cleared, a fresh participant is created, and the upsert is retried.
+ * The user gets a new anonymous name — transparent to them.
+ */
+export async function ensureParticipantAndUpsertSubmission(
+  supabase: SupabaseClient,
+  roomId: string,
+  color: DominantColorResult,
+): Promise<StoredParticipant> {
+  let participant = loadStoredParticipant(roomId)
+
+  if (!participant) {
+    participant = await createParticipant(supabase, roomId)
   }
 
-  return participant
+  try {
+    await upsertSubmission(supabase, participant, color)
+    return participant
+  } catch {
+    // Stale participant_id (DB was reset, row deleted, etc.) — rebuild identity and retry once.
+    clearStoredParticipant(roomId)
+    participant = await createParticipant(supabase, roomId)
+    await upsertSubmission(supabase, participant, color)
+    return participant
+  }
 }
