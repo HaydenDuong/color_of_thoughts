@@ -15,12 +15,12 @@ type SyncState =
   | { kind: 'idle' }
   | { kind: 'local' }
   | { kind: 'saving' }
-  | { kind: 'saved'; displayName: string }
+  | { kind: 'saved'; displayName: string; participantId: string }
   | { kind: 'error'; message: string }
 
 /**
- * Phase 1: image → dominant color → 3D sphere + optional Supabase persistence
- * (`participants` + `submissions` upsert for the default room).
+ * Phase 1: image → palette (k-means) + primary color → 3D "cloud" sphere
+ * + optional Supabase persistence (`participants` + `submissions` upsert).
  */
 export function App() {
   const inputId = useId()
@@ -73,6 +73,7 @@ export function App() {
         setSyncState({
           kind: 'saved',
           displayName: participant.displayName,
+          participantId: participant.id,
         })
       } catch (syncErr) {
         const msg =
@@ -93,6 +94,8 @@ export function App() {
   const cssRgb = result
     ? `rgb(${result.r}, ${result.g}, ${result.b})`
     : undefined
+  const textureSeed =
+    syncState.kind === 'saved' ? syncState.participantId : undefined
 
   return (
     <div className="app">
@@ -100,9 +103,9 @@ export function App() {
       <header className="header">
         <h1>Color of Thoughts</h1>
         <p className="lede">
-          Phase 1: upload a photo of colored paper—we sample the middle of the image and show the
-          averaged color on a 3D sphere. Your color can be saved to Supabase for the exhibition
-          wall (same anonymous name on this device until you clear site data).
+          Phase 1: upload a photo of your drawing — we extract its palette and render a 3D sphere
+          that reflects the composition of colors. Your sphere is saved to the exhibition wall
+          (same anonymous name on this device until you clear site data).
         </p>
       </header>
 
@@ -143,18 +146,46 @@ export function App() {
         <div className="column">
           {result && (
             <>
-              <ColorSphere color={cssRgb!} className="sphere-wrap" />
+              <ColorSphere
+                color={cssRgb!}
+                palette={result.palette}
+                textureSeed={textureSeed}
+                className="sphere-wrap"
+              />
+
+              {result.palette.length > 0 && (
+                <div className="palette-row" aria-label="Extracted palette">
+                  {result.palette.map((p, idx) => (
+                    <div
+                      key={`${p.hex}-${idx}`}
+                      className="palette-chip"
+                      style={{
+                        backgroundColor: p.hex,
+                        flexGrow: Math.max(0.35, p.weight),
+                      }}
+                      title={`${p.hex} · ${(p.weight * 100).toFixed(1)}%`}
+                    >
+                      <span className="palette-chip-label">
+                        {(p.weight * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="meta" aria-live="polite">
                 <p className="hex">
-                  <span className="meta-label">Hex (accessibility):</span>{' '}
+                  <span className="meta-label">Primary hex (accessibility):</span>{' '}
                   <strong>{result.hex}</strong>
                 </p>
                 <p className="rgb">
-                  <span className="meta-label">RGB:</span>{' '}
+                  <span className="meta-label">Primary RGB:</span>{' '}
                   {result.r}, {result.g}, {result.b}
                 </p>
                 <p className="uniformity">
-                  <span className="meta-label">Uniformity (0–1, heuristic):</span>{' '}
+                  <span className="meta-label">Palette size:</span>{' '}
+                  {result.palette.length} color{result.palette.length === 1 ? '' : 's'}{' '}
+                  &middot; <span className="meta-label">uniformity:</span>{' '}
                   {result.uniformityScore.toFixed(2)}
                 </p>
 
@@ -163,7 +194,7 @@ export function App() {
                     <strong>Local preview only.</strong> Add{' '}
                     <code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_ANON_KEY</code>, and{' '}
                     <code>VITE_DEFAULT_ROOM_ID</code> to <code>web/.env.local</code> (see{' '}
-                    <code>.env.example</code>) to save your color to the database.
+                    <code>.env.example</code>) to save your sphere to the database.
                   </p>
                 )}
                 {syncState.kind === 'saving' && (
@@ -172,7 +203,7 @@ export function App() {
                 {syncState.kind === 'saved' && (
                   <p className="sync sync-saved">
                     <strong>Saved.</strong> You appear as <strong>{syncState.displayName}</strong>.
-                    Re-upload updates your row (one sphere per device in this room).
+                    Re-upload updates your sphere (one per device in this room).
                   </p>
                 )}
                 {syncState.kind === 'error' && (
@@ -182,8 +213,9 @@ export function App() {
                 )}
 
                 <p className="hint">
-                  Lower uniformity often means shadows or mixed colors in the crop—try even
-                  lighting or fill the frame with paper.
+                  The sphere's surface shows a blurred composition of your image's colors,
+                  weighted by how much of the picture each color covers. Near-white paper is
+                  filtered before extraction.
                 </p>
               </div>
             </>

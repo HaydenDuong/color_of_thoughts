@@ -42,6 +42,7 @@ async function upsertSubmission(
       b: color.b,
       hex: color.hex,
       uniformity_score: color.uniformityScore,
+      palette: color.palette,
     },
     { onConflict: 'participant_id' },
   )

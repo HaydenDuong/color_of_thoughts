@@ -4,6 +4,7 @@ import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import type { WallEntry } from '../lib/wallData'
 import { placementFromParticipantId } from '../lib/placement'
+import { PaletteSphereMaterial } from './PaletteSphereMaterial'
 
 type DriftingSphereProps = {
   entry: WallEntry
@@ -15,7 +16,9 @@ function DriftingSphere({ entry }: DriftingSphereProps) {
     () => placementFromParticipantId(entry.participantId),
     [entry.participantId],
   )
-  const color = `rgb(${entry.r}, ${entry.g}, ${entry.b})`
+
+  const hasPalette = entry.palette && entry.palette.length >= 2
+  const fallback = `rgb(${entry.r}, ${entry.g}, ${entry.b})`
 
   useFrame(({ clock }) => {
     const t = clock.elapsedTime
@@ -34,13 +37,27 @@ function DriftingSphere({ entry }: DriftingSphereProps) {
     <mesh
       ref={mesh}
       position={[placement.baseX, placement.baseY, placement.baseZ]}
+      scale={0.32}
     >
-      <sphereGeometry args={[0.26, 32, 32]} />
-      <meshStandardMaterial
-        color={color}
-        roughness={0.4}
-        metalness={0.1}
-      />
+      {/* Unit Icosahedron — even triangulation so the shader's latitude
+          twist reads cleanly. Lower detail than the preview since wall
+          spheres are small on screen. Actual size comes from `scale`. */}
+      <icosahedronGeometry args={[1, 24]} />
+      {hasPalette ? (
+        <PaletteSphereMaterial
+          palette={entry.palette}
+          seed={entry.participantId}
+          animate
+        />
+      ) : (
+        <meshPhysicalMaterial
+          color={fallback}
+          roughness={0.4}
+          metalness={0.0}
+          clearcoat={0.3}
+          clearcoatRoughness={0.3}
+        />
+      )}
     </mesh>
   )
 }
@@ -51,7 +68,7 @@ export type WallSceneProps = {
 }
 
 /**
- * Single canvas for many colored spheres (exhibition wall).
+ * Single canvas for many marble spheres (exhibition wall).
  * Shared lights; each mesh drifts slowly from a hash-based anchor.
  */
 export function WallScene({ entries, className }: WallSceneProps) {
@@ -62,10 +79,10 @@ export function WallScene({ entries, className }: WallSceneProps) {
         style={{ width: '100%', height: 'min(72vh, 640px)', touchAction: 'none' }}
         gl={{ antialias: true, alpha: false }}
       >
-        <color attach="background" args={['#0c0c12']} />
-        <ambientLight intensity={0.5} />
-        <directionalLight position={[6, 8, 10]} intensity={1.05} />
-        <directionalLight position={[-5, -3, -4]} intensity={0.35} />
+        <color attach="background" args={['#F5EFE6']} />
+        <ambientLight intensity={0.75} />
+        <directionalLight position={[6, 8, 10]} intensity={0.9} color="#fff6e8" />
+        <directionalLight position={[-5, -3, -4]} intensity={0.3} color="#dfe6ff" />
         {entries.map((e) => (
           <DriftingSphere key={e.participantId} entry={e} />
         ))}

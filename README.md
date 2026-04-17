@@ -6,8 +6,13 @@ Living spec for the project: goals, agreed features, and technical notes. Update
 
 - **Run locally:** `cd web` → `npm install` → `npm run dev` → open the URL Vite prints (usually `http://localhost:5173`).
 - **Build:** `cd web` → `npm run build` (TypeScript check + production bundle).
-- **What it does:** file picker → **dominant color** from a **center crop** of the downscaled image → **3D sphere** + **hex / RGB / uniformity** text (uniformity is a heuristic for later “try better lighting” hints).
+- **What it does:** file picker → **k-means palette** (up to 8 colors, near-white pixels filtered) + averaged **primary color** from a **center crop** of the downscaled image → **twisted, grooved blob** where the surface bumps show the image's top 5 palette colors as **bands** (crayon-record look) → **swatch row** of the full palette + **hex / RGB / palette / uniformity** text.
 - **Note:** color extraction runs **in the browser** for the fastest Phase 1 loop; the same math can move to a **Supabase Edge Function** later without changing the UI much.
+- **Visual:** cream background (`#F5EFE6`) on all 3D canvases. The sphere is a plain `THREE.ShaderMaterial` (no PBR lighting — bands come from color-is-a-function-of-noise, not from light direction) on an `IcosahedronGeometry` base. Approach ported from [Codrops — Creative WebGL Blobs, demo 3 "Insomnia"](https://github.com/codrops/WebGLBlobs) (MIT, by Mario Carrillo) with the 2-tone procedural `cosPalette` swapped for a weighted lookup into the user's extracted palette:
+  - **Vertex shader** — Perlin-noise displacement along each vertex's normal, then `rotateY(pos, sin(uv.y * uFreq + t) * uAmp)` for the latitude-dependent twist that carves visible grooves, plus a gentle breathing scale.
+  - **Fragment shader** — `t = fract(vUv.y * 1.35 + vDistort / strength * 0.45 + uPhase + uTime * 0.03)`; soft circular-window palette lookup so each color's visible share is proportional to its weight and adjacent colors crossfade cleanly. Tiny-weight floor guarantees 5% colors still appear.
+  - **Per-sphere phase** — hashed from `participant_id` so 50 wall spheres read as distinct variations of the same event palette.
+  - **Accessibility** — respects OS `prefers-reduced-motion`: slower speed, smaller twist, flatter breathing.
 
 #### Progress (current)
 
@@ -19,7 +24,8 @@ Living spec for the project: goals, agreed features, and technical notes. Update
 ### Database (Supabase)
 
 - **Schema file:** `supabase/migrations/20260411120000_initial_schema.sql` — `rooms`, `participants`, `submissions` (one color row per participant, upsert on re-upload), RLS for anon, seed room `default`, Realtime publication for wall updates.
-- **Apply:** paste that SQL in the Supabase **SQL Editor** and run, or use the Supabase CLI (`supabase db push`). Step-by-step: `supabase/README.md`.
+- **Add-on migration:** `supabase/migrations/20260416120000_add_palette.sql` — adds a `palette JSONB` column to `submissions` (array of `{r,g,b,hex,weight}` ordered by weight desc) for the cloud-texture sphere.
+- **Apply:** paste each SQL file in order in the Supabase **SQL Editor** and run, or use the Supabase CLI (`supabase db push`). Step-by-step: `supabase/README.md`.
 - **Env:** copy `web/.env.example` → `web/.env.local` and set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_DEFAULT_ROOM_ID` (**must match** the `rooms.id` row in your project, often the seeded default).
 - **App wiring:** after upload, the client **creates a `participants` row** once per browser+room (anonymous label + localStorage), then **upserts `submissions`** so repeat uploads update the same color row.
 - **Realtime (wall):** migration adds `submissions` to `supabase_realtime`. If live updates do not fire, confirm **Database → Publications / Replication** in the dashboard includes **`submissions`**.
@@ -168,3 +174,7 @@ You do **not** need to block on supervisor invites to make progress. Treat your 
 | 2026-04-12 | Wired `web/` to Supabase: anonymous participant + submission upsert after color extraction. |
 | 2026-04-12 | README progress: validated re-upload vs new session; GitHub push noted; checklist updated (wall/QR/deploy still open). |
 | 2026-04-16 | Wall (`/wall`), QR (`/qr`), React Router, `react-router-dom` + `qrcode.react`. |
+| 2026-04-16 | Palette pipeline (k-means, 8 colors, near-white filter) + cloud-texture sphere; cream (`#F5EFE6`) canvas backgrounds on `/` and `/wall`; `submissions.palette` JSONB column. |
+| 2026-04-16 | Swap cloud-texture sphere → **GLSL marble shader** (domain-warped Perlin noise over top-5 palette colors, `three-custom-shader-material` + `MeshPhysicalMaterial` iridescence/clearcoat). Retired `paletteTexture.ts`. |
+| 2026-04-16 | **Breathing blob**: spatial color blending → **temporal color cycling** (dwell ∝ weight, soft crossfades, per-sphere phase offset) + **vertex displacement with recomputed normals** in the vertex shader. Added `usePrefersReducedMotion` hook (slower cycle + flatter displacement when reduce-motion is on). Wall meshes switched to unit-sphere geometry + `scale` so the displacement math is consistent at every size. |
+| 2026-04-16 | **Insomnia-style blob**: temporal cycling did not match the banded look the supervisor was after. Ported Codrops WebGLBlobs demo 3 pipeline — plain `ShaderMaterial`, latitude-twist via `rotateY(sin(uv.y * uFreq + t) * uAmp)`, color = palette-lookup of `vDistort`. Replaced their 2-tone procedural `cosPalette` with a weighted lookup into the user's extracted palette so the visible bands are the image's own crayon colors. Geometry switched to `IcosahedronGeometry` (even triangles, no pole pinching when twisted). Removed `three-custom-shader-material` / PBR wrappers — bands rely on unlit color. |

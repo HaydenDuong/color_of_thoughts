@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { PaletteColor } from './colorFromImage'
 
 /** One sphere on the exhibition wall (joined from submissions + participants). */
 export type WallEntry = {
@@ -8,6 +9,7 @@ export type WallEntry = {
   g: number
   b: number
   hex: string
+  palette: PaletteColor[]
 }
 
 type ParticipantEmbed = {
@@ -21,12 +23,33 @@ type SubmissionJoinRow = {
   g: number
   b: number
   hex: string
+  palette: unknown
   /** PostgREST may return object or single-element array depending on client inference */
   participants: ParticipantEmbed | ParticipantEmbed[]
 }
 
 function embedParticipant(p: ParticipantEmbed | ParticipantEmbed[]): ParticipantEmbed {
   return Array.isArray(p) ? p[0]! : p
+}
+
+/** Defensive parse: JSONB can be null or unexpected shape if a row was hand-edited. */
+function parsePalette(raw: unknown): PaletteColor[] {
+  if (!Array.isArray(raw)) return []
+  const out: PaletteColor[] = []
+  for (const item of raw) {
+    if (
+      item &&
+      typeof item === 'object' &&
+      typeof (item as PaletteColor).r === 'number' &&
+      typeof (item as PaletteColor).g === 'number' &&
+      typeof (item as PaletteColor).b === 'number' &&
+      typeof (item as PaletteColor).hex === 'string' &&
+      typeof (item as PaletteColor).weight === 'number'
+    ) {
+      out.push(item as PaletteColor)
+    }
+  }
+  return out
 }
 
 /**
@@ -46,6 +69,7 @@ export async function fetchWallSubmissions(
       g,
       b,
       hex,
+      palette,
       participants!inner ( display_name, room_id )
     `,
     )
@@ -65,6 +89,7 @@ export async function fetchWallSubmissions(
       g: row.g,
       b: row.b,
       hex: row.hex,
+      palette: parsePalette(row.palette),
     }
   })
 }
