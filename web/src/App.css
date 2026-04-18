@@ -311,12 +311,40 @@ body {
   text-decoration: underline;
 }
 
+/*
+ * Wall page layout: the overall .app container is capped at 960px for text
+ * readability, but the wall page specifically widens to give the canvas real
+ * estate. Header and participant list stay capped so copy doesn't stretch.
+ */
+.wall-page.app {
+  max-width: 1600px;
+}
+
+.wall-page .header,
+.wall-page .wall-list,
+.wall-page .wall-empty,
+.wall-page .wall-mode-toolbar {
+  max-width: 960px;
+}
+
 .wall-canvas-wrap {
   margin-top: 0.5rem;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid #3c362d;
   background: #F5EFE6;
+  /*
+   * Canvas surface size. Lifted from the old min(72vh, 640px) cap so the
+   * wall gets more room (especially on larger monitors / projectors). The
+   * physics tank auto-recomputes from this size so spheres spread out
+   * naturally without code changes.
+   */
+  height: min(82vh, 1080px);
+}
+
+.wall-canvas-wrap > div,
+.wall-canvas-wrap canvas {
+  height: 100% !important;
 }
 
 .wall-mode-toolbar {

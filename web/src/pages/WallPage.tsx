@@ -5,16 +5,20 @@ import { WallScene } from '../components/WallScene'
 import { getSupabasePublicConfig } from '../lib/env'
 import { getSupabaseBrowserClient } from '../lib/supabaseBrowser'
 import { fetchWallSubmissions, type WallEntry } from '../lib/wallData'
+import { generateTestEntries } from '../lib/testWallData'
 import type { WallMode } from '../lib/wallPhysics'
 import '../App.css'
 
 /**
  * Exhibition view: all submission colors for the default room, live via Realtime.
  *
- * Supports three physics modes selectable via `?mode=` in the URL:
- *   - `flow` (default)  : soft vertical gradient + per-rating motion character.
- *   - `orbit`           : concentric attractor orbits around the canvas center.
- *   - `bands`           : hidden 3-layer comparison view (no UI toggle).
+ * URL params:
+ *   - `mode=flow|orbit|bands` — physics mode (see WallScene). Default `flow`.
+ *   - `test=N`                — **dev only**: skip Supabase and render `N`
+ *                               (1..200, default 30) synthesized blobs with
+ *                               deterministic random palettes + ratings. Never
+ *                               writes to the DB. Navigate to `/wall` (without
+ *                               the param) to return to live data.
  *
  * The Flow/Orbit toggle in the top-right writes to the URL so a tab opened
  * to `/wall?mode=orbit` stays on orbit mode across refresh, and two tabs can
@@ -26,9 +30,20 @@ const VISIBLE_MODES: ReadonlyArray<{ key: WallMode; label: string; hint: string 
   { key: 'orbit', label: 'Orbit', hint: 'Concentric orbits around the center' },
 ]
 
+const TEST_DEFAULT_COUNT = 30
+const TEST_MAX_COUNT = 200
+
 function parseMode(raw: string | null): WallMode {
   if (raw === 'orbit' || raw === 'flow' || raw === 'bands') return raw
   return 'flow'
+}
+
+function parseTestCount(raw: string | null): number | null {
+  if (raw === null) return null
+  if (raw === '') return TEST_DEFAULT_COUNT
+  const n = Number.parseInt(raw, 10)
+  if (!Number.isFinite(n) || n < 1) return TEST_DEFAULT_COUNT
+  return Math.min(TEST_MAX_COUNT, n)
 }
 
 export function WallPage() {
@@ -38,6 +53,8 @@ export function WallPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const mode = useMemo(() => parseMode(searchParams.get('mode')), [searchParams])
+  const testCount = useMemo(() => parseTestCount(searchParams.get('test')), [searchParams])
+  const isTestMode = testCount !== null
 
   const setMode = useCallback(
     (next: WallMode) => {
@@ -75,11 +92,14 @@ export function WallPage() {
     }
   }, [])
 
+  // Live-data path: only runs when NOT in test mode.
   useEffect(() => {
+    if (isTestMode) return
     void load()
-  }, [load])
+  }, [load, isTestMode])
 
   useEffect(() => {
+    if (isTestMode) return
     const supabase = getSupabaseBrowserClient()
     if (!supabase) return
 
@@ -97,7 +117,15 @@ export function WallPage() {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [load])
+  }, [load, isTestMode])
+
+  // Test-data path: synthesize deterministically. Count change → regenerate.
+  useEffect(() => {
+    if (!isTestMode) return
+    setError(null)
+    setEntries(generateTestEntries(testCount ?? TEST_DEFAULT_COUNT))
+    setLoading(false)
+  }, [isTestMode, testCount])
 
   return (
     <div className="app wall-page">
@@ -149,7 +177,13 @@ export function WallPage() {
                 )
               })}
             </div>
-            {mode === 'bands' && (
+            {isTestMode && (
+              <span className="wall-mode-note" aria-live="polite">
+                Test mode: <strong>{entries.length}</strong> synthesized blobs (no DB). Remove
+                <code> ?test=</code> to return to live data.
+              </span>
+            )}
+            {mode === 'bands' && !isTestMode && (
               <span className="wall-mode-note" aria-live="polite">
                 Comparison mode: <strong>Bands</strong> (URL-only). Use buttons to switch back.
               </span>
@@ -157,7 +191,9 @@ export function WallPage() {
           </div>
           <WallScene entries={entries} mode={mode} className="wall-canvas-wrap" />
           <section className="wall-list" aria-label="Participants on wall">
-            <h2 className="wall-list-title">On the wall ({entries.length})</h2>
+            <h2 className="wall-list-title">
+              On the wall ({entries.length}){isTestMode ? ' — test mode' : ''}
+            </h2>
             <ul className="wall-list-ul">
               {entries.map((e) => (
                 <li key={e.participantId}>

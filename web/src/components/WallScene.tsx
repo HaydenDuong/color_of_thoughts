@@ -41,6 +41,29 @@ const CAMERA_FOV = 45
 /** Inset the physics tank slightly so spheres bounce visibly inside the frame. */
 const WALL_PAD = 0.15
 
+/**
+ * Dynamic sphere sizing: a global `scaleFactor` ∈ [SCALE_MIN, SCALE_MAX]
+ * multiplies both the visual mesh scale and the physics collision radius so
+ * the wall stays visually breathable as the crowd grows.
+ *
+ *   scaleTarget = clamp(sqrt(REF_COUNT / count), SCALE_MIN, SCALE_MAX)
+ *
+ * REF_COUNT = the "comfortable" count (~20 blobs ≈ 1× size). Below that
+ * spheres grow up to 1.2×; above it they shrink down to 0.6× at around 80
+ * spheres. The factor is exponentially smoothed with `SCALE_TAU` seconds
+ * so joins/leaves ripple through the ensemble instead of snapping.
+ */
+const SCALE_REF_COUNT = 20
+const SCALE_MIN = 0.6
+const SCALE_MAX = 1.2
+const SCALE_TAU = 0.2
+
+function computeScaleTarget(count: number): number {
+  if (count <= 0) return SCALE_MAX
+  const raw = Math.sqrt(SCALE_REF_COUNT / count)
+  return Math.max(SCALE_MIN, Math.min(SCALE_MAX, raw))
+}
+
 export type WallSceneProps = {
   entries: WallEntry[]
   /** Which physics mode drives motion. Defaults to `flow`. */
@@ -54,7 +77,9 @@ export function WallScene({ entries, mode = 'flow', className }: WallSceneProps)
       <Canvas
         dpr={[1, 1.5]}
         camera={{ position: [0, 0, CAMERA_Z], fov: CAMERA_FOV }}
-        style={{ width: '100%', height: 'min(72vh, 640px)', touchAction: 'none' }}
+        // Height lives in CSS (`.wall-canvas-wrap canvas`) so exhibition /
+        // projector setups can override it without touching this component.
+        style={{ width: '100%', touchAction: 'none' }}
         gl={{ antialias: true, alpha: false }}
       >
         <color attach="background" args={['#F5EFE6']} />
@@ -92,6 +117,16 @@ function PhysicsGroup({ entries, mode }: PhysicsGroupProps) {
   const statesRef = useRef<Map<string, PhysicsSphere>>(new Map())
   const meshesRef = useRef<Map<string, THREE.Mesh>>(new Map())
   const groupRef = useRef<THREE.Group>(null)
+
+  /**
+   * Global scale factor, exponentially smoothed toward `scaleTarget` in
+   * `useFrame`. Applied every frame to (a) each sphere's collision radius
+   * and (b) each mesh's visual scale so physics stays consistent with
+   * what you see. Kept in a ref (not state) to avoid re-renders on every
+   * frame of the lerp.
+   */
+  const scaleFactorRef = useRef(1)
+  const scaleTarget = useMemo(() => computeScaleTarget(entries.length), [entries.length])
 
   const modeRef = useRef<WallMode>(mode)
   useEffect(() => {
@@ -141,6 +176,10 @@ function PhysicsGroup({ entries, mode }: PhysicsGroupProps) {
         meshesRef.current.delete(id)
       }
     }
+    // Initial spawns use the lerp target (not the current lerped value) so
+    // a new blob lands at a position that respects the final crowd-size,
+    // not the 1-frame snapshot.
+    const spawnRadius = SPHERE_RADIUS * scaleTarget
     for (const e of entries) {
       const existing = states.get(e.participantId)
       if (!existing) {
@@ -149,7 +188,7 @@ function PhysicsGroup({ entries, mode }: PhysicsGroupProps) {
           seededInitialState(
             e.participantId,
             bounds,
-            SPHERE_RADIUS,
+            spawnRadius,
             e.turbulence,
             mode,
           ),
@@ -182,6 +221,18 @@ function PhysicsGroup({ entries, mode }: PhysicsGroupProps) {
     const list = Array.from(statesRef.current.values())
     const t = state.clock.elapsedTime
     const currentMode = modeRef.current
+
+    // Exponential smoothing toward scaleTarget (framerate-independent).
+    const alpha = 1 - Math.exp(-Math.max(0, dt) / SCALE_TAU)
+    scaleFactorRef.current += (scaleTarget - scaleFactorRef.current) * alpha
+    const sf = scaleFactorRef.current
+    const radiusNow = SPHERE_RADIUS * sf
+    const visualScale = SPHERE_SCALE * sf
+
+    // Keep each sphere's collision radius in sync with the visual scale so
+    // shrinking the crowd doesn't leave "ghost" collision auras behind.
+    for (const s of list) s.radius = radiusNow
+
     if (currentMode === 'orbit') {
       stepOrbitPhysics(list, dt, bounds, t, physicsConfig)
     } else if (currentMode === 'bands') {
@@ -192,7 +243,10 @@ function PhysicsGroup({ entries, mode }: PhysicsGroupProps) {
 
     for (const s of list) {
       const mesh = meshesRef.current.get(s.id)
-      if (mesh) mesh.position.set(s.x, s.y, 0)
+      if (mesh) {
+        mesh.position.set(s.x, s.y, 0)
+        mesh.scale.setScalar(visualScale)
+      }
     }
 
     const p = parallax.current

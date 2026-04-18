@@ -29,6 +29,19 @@ Living spec for the project: goals, agreed features, and technical notes. Update
 - **Routes:** **`/`** upload · **`/wall`** live multi-sphere wall (Realtime refetch on `submissions`) · **`/qr`** QR code to the same origin’s upload URL (for the big screen).
 - **Still Phase 1:** optional **deploy** (so QR uses a public URL), optional **Edge** extraction, **highlight “your” sphere** on phone vs neutral wall.
 
+#### Wall canvas sizing
+
+- **Canvas height** is set in `.wall-canvas-wrap` (`App.css`) to `min(82vh, 1080px)` so the tank fills most of the viewport on laptops and up to a roomier 1080-pixel max on large monitors. The physics tank auto-recomputes from canvas size, so the bigger the canvas, the more room spheres get — no code changes needed.
+- **Wall page layout** (`.wall-page.app`) widens to `1600px` on the `/wall` route only; the header / list / toolbar stay capped at `960px` for readable line lengths while the canvas breaks out wider.
+- **Dynamic sphere sizing:** `WallScene` computes a single `scaleFactor = clamp(sqrt(20 / count), 0.6, 1.2)`, exponentially smoothed with τ=0.2s, and applies it **every frame** to both the mesh `scale` and each sphere's physics-collision `radius`. With ≤20 spheres the wall looks big and airy (up to 1.2×); by ~60 spheres everything has shrunk to ~0.58× so the wall stays breathable. The smoothing makes arrivals/departures ripple through the ensemble instead of snapping.
+- **Lever C — fullscreen "Present" button (deferred until projector setup):** CSS already lets the canvas grow; the remaining step is a button on `/wall` that calls `element.requestFullscreen()` (via the Fullscreen API) on the canvas wrapper. Keyboard shortcut candidate: `F`. When implementing, also add a translucent "Exit fullscreen" hint, hide `SiteNav` + header + list in the `:fullscreen` state, and restore them on exit. No backend work required — pure CSS + one event handler.
+
+#### Dev mode (`/wall?test=N`)
+
+- Append `?test=N` (1–200, default **30**) to `/wall` to render deterministic **synthesized** blobs with random palettes + ratings. Supabase is **not** queried and **no rows are written**. Navigate back to `/wall` (without the param) to return to live data.
+- Seed is fixed (`1337`), so the same `?test=30` URL always produces the exact same 30 blobs. Combine with `&mode=orbit` or `&mode=flow` to stress-test either motion mode.
+- Useful for: verifying Flow/Orbit layouts at crowd scale, eyeballing the dynamic-sizing ripple, and screenshotting a populated wall without needing 30 real participants.
+
 ### Database (Supabase)
 
 - **Schema file:** `supabase/migrations/20260411120000_initial_schema.sql` — `rooms`, `participants`, `submissions` (one color row per participant, upsert on re-upload), RLS for anon, seed room `default`, Realtime publication for wall updates.
