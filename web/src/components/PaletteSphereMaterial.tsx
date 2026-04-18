@@ -26,7 +26,13 @@ import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion'
  * light direction.
  */
 
-const MAX_COLORS = 5
+/**
+ * Full palette width — matches `PALETTE_SIZE` in `colorFromImage.ts`.
+ * Every extracted color is sent to the shader; the weighted-window lookup
+ * keeps dominant colors visible for a correspondingly longer share of the
+ * sphere, while smaller ones still get a briefly visible band.
+ */
+const MAX_COLORS = 8
 
 type Props = {
   palette: PaletteColor[]
@@ -225,7 +231,10 @@ vec3 paletteLookup(float t) {
   vec3  total    = vec3(0.0);
   float totalAct = 0.0;
   float cum      = 0.0;
-  const float softness = 0.10;
+  // Crossfade between adjacent colors. Tightened from 0.10 → 0.07 now
+  // that the palette holds 8 colors (average band width ≈ 0.125), so
+  // neighbors don't blur into each other and individual colors stay readable.
+  const float softness = 0.07;
 
   for (int i = 0; i < ${MAX_COLORS}; i++) {
     if (i >= uColorCount) break;
