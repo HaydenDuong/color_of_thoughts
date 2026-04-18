@@ -2,6 +2,7 @@ import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { PaletteSphereMaterial } from './PaletteSphereMaterial'
 import type { PaletteColor } from '../lib/colorFromImage'
+import type { TurbulenceRating } from './TurbulenceSelector'
 
 /**
  * 3D preview of the extracted color(s).
@@ -17,10 +18,17 @@ type SphereMeshProps = {
   fallbackColor: string
   palette?: PaletteColor[]
   seed?: string
+  turbulence?: TurbulenceRating
   animate?: boolean
 }
 
-function SphereMesh({ fallbackColor, palette, seed, animate }: SphereMeshProps) {
+function SphereMesh({
+  fallbackColor,
+  palette,
+  seed,
+  turbulence,
+  animate,
+}: SphereMeshProps) {
   const hasPalette = Boolean(palette && palette.length >= 2)
 
   return (
@@ -33,6 +41,7 @@ function SphereMesh({ fallbackColor, palette, seed, animate }: SphereMeshProps) 
         <PaletteSphereMaterial
           palette={palette!}
           seed={seed ?? fallbackColor}
+          turbulence={turbulence}
           animate={animate}
         />
       ) : (
@@ -55,6 +64,8 @@ export type ColorSphereProps = {
   palette?: PaletteColor[]
   /** Stable seed (e.g. participant id) so the marble pattern does not reshuffle. */
   textureSeed?: string
+  /** Live rating 1..5; drives the breathing/churning intensity. */
+  turbulence?: TurbulenceRating
   className?: string
 }
 
@@ -62,6 +73,7 @@ export function ColorSphere({
   color,
   palette,
   textureSeed,
+  turbulence,
   className,
 }: ColorSphereProps) {
   return (
@@ -83,6 +95,7 @@ export function ColorSphere({
           fallbackColor={color}
           palette={palette}
           seed={textureSeed ?? color}
+          turbulence={turbulence}
           animate
         />
         <OrbitControls enableZoom={false} enablePan={false} />

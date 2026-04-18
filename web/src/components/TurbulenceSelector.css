@@ -1,0 +1,438 @@
+/*
+ * Turbulence selector — a flattened (plain CSS) port of Aaron Iker's animated
+ * face radios (https://codepen.io/aaroniker/pen/RwKZeeR, MIT) wrapped in a
+ * Uiverse.io-style cream reaction pill with per-option hover tooltip.
+ *
+ * All selectors are scoped under `.turbulence-selector` so nothing here leaks
+ * into the rest of the app.
+ *
+ * Color tokens are adjusted from the original dark-theme palette to sit on
+ * our cream `#F5EFE6` surface: unselected faces are white pills with dark
+ * stroke, selected faces keep the original warm yellow + color animations.
+ */
+
+.turbulence-selector {
+  /* Container (pill) */
+  --pill-bg: #F5EFE6;
+  --pill-shadow: 0 4px 18px -6px rgba(30, 22, 14, 0.25);
+
+  /* Unselected face slot */
+  --normal: #ffffff;
+  --normal-shadow: #e0d9ce;
+  --normal-shadow-top: #fffaf2;
+  --normal-mouth: #2a2a33;
+  --normal-eye: #2a2a33;
+
+  /* Selected face slot (kept from original — the yellow is the whole point) */
+  --active: #f8da69;
+  --active-shadow: #f4b555;
+  --active-shadow-top: #fff6d3;
+  --active-mouth: #f05136;
+  --active-eye: #313036;
+  --active-tear: #76b5e7;
+  --active-shadow-angry: #e94f1d;
+
+  /* Hover (unselected) */
+  --hover: #faf7f1;
+  --hover-shadow-top: #ffffff;
+
+  /* Tooltip */
+  --tip-bg: rgba(25, 24, 24, 0.9);
+  --tip-fg: #fff;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 18px;
+  background: var(--pill-bg);
+  border-radius: 999px;
+  box-shadow: var(--pill-shadow);
+  list-style: none;
+  margin: 0;
+}
+
+/* --- Face slot ---------------------------------------------------------- */
+
+.turbulence-selector .ts-option {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  transition: transform 0.3s;
+}
+
+.turbulence-selector .ts-option input {
+  appearance: none;
+  outline: none;
+  border: none;
+  display: block;
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  left: 0;
+  top: 0;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--sb, var(--normal));
+  box-shadow:
+    inset 3px -3px 4px var(--sh, var(--normal-shadow)),
+    inset -1px 1px 2px var(--sht, var(--normal-shadow-top));
+  transition: background 0.4s, box-shadow 0.4s, transform 0.3s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.turbulence-selector .ts-option .ts-face {
+  width: 40px;
+  height: 40px;
+  position: relative;
+  transform: perspective(240px) translateZ(4px);
+}
+
+.turbulence-selector .ts-option .ts-face svg,
+.turbulence-selector .ts-option .ts-face::before,
+.turbulence-selector .ts-option .ts-face::after {
+  display: block;
+  position: absolute;
+  left: var(--l, 9px);
+  top: var(--t, 13px);
+  width: var(--w, 8px);
+  height: var(--h, 1px);
+  transform: rotate(var(--r, 0deg)) scale(var(--sc, 1)) translateZ(0);
+}
+
+.turbulence-selector .ts-option .ts-face svg {
+  fill: none;
+  stroke: var(--s);
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 0.4s;
+}
+
+.turbulence-selector .ts-option .ts-face svg.ts-eye {
+  --s: var(--e, var(--normal-eye));
+  --t: 17px;
+  --w: 7px;
+  --h: 4px;
+}
+.turbulence-selector .ts-option .ts-face svg.ts-eye-right {
+  --l: 23px;
+}
+
+.turbulence-selector .ts-option .ts-face svg.ts-mouth {
+  --s: var(--m, var(--normal-mouth));
+  --l: 11px;
+  --t: 23px;
+  --w: 18px;
+  --h: 7px;
+}
+
+.turbulence-selector .ts-option .ts-face::before,
+.turbulence-selector .ts-option .ts-face::after {
+  content: "";
+  z-index: var(--zi, 1);
+  border-radius: var(--br, 1px);
+  background: var(--b, var(--e, var(--normal-eye)));
+  transition: background 0.4s;
+}
+
+/* --- Per-face overrides (5 states) -------------------------------------- */
+
+/* 1 / happy — calm */
+.turbulence-selector .ts-option.ts-happy {
+  --step-1-rx: 18deg;
+  --step-1-ry: 24deg;
+  --step-2-rx: 18deg;
+  --step-2-ry: -24deg;
+}
+.turbulence-selector .ts-option.ts-happy .ts-face::before {
+  --sc: 0;
+}
+.turbulence-selector .ts-option.ts-happy .ts-face::after {
+  --b: var(--m, var(--normal-mouth));
+  --l: 11px;
+  --t: 23px;
+  --w: 18px;
+  --h: 8px;
+  --br: 0 0 8px 8px;
+}
+.turbulence-selector .ts-option.ts-happy .ts-face svg.ts-eye {
+  --t: 14px;
+  --sc: -1;
+}
+.turbulence-selector .ts-option.ts-happy input:checked + .ts-face::after {
+  --middle-s-x: 0.95;
+  --middle-s-y: 0.75;
+  animation: ts-toggle 0.8s linear forwards;
+}
+
+/* 2 / good — settled */
+.turbulence-selector .ts-option.ts-good {
+  --step-1-rx: -14deg;
+  --step-1-rz: 10deg;
+  --step-2-rx: 10deg;
+  --step-2-rz: -8deg;
+}
+.turbulence-selector .ts-option.ts-good .ts-face::before {
+  --b: var(--m, var(--normal-mouth));
+  --w: 5px;
+  --h: 5px;
+  --br: 50%;
+  --t: 22px;
+  --zi: 0;
+  opacity: 0.5;
+  box-shadow: 16px 0 0 var(--b);
+  filter: blur(2px);
+}
+.turbulence-selector .ts-option.ts-good .ts-face::after {
+  --sc: 0;
+}
+.turbulence-selector .ts-option.ts-good .ts-face svg.ts-eye {
+  --t: 15px;
+  --sc: -1;
+  stroke-dasharray: 4.55;
+  stroke-dashoffset: 8.15;
+}
+.turbulence-selector .ts-option.ts-good .ts-face svg.ts-mouth {
+  --t: 22px;
+  --sc: -1;
+  stroke-dasharray: 13.3;
+  stroke-dashoffset: 23.75;
+}
+.turbulence-selector .ts-option.ts-good input:checked + .ts-face svg.ts-mouth {
+  --middle-y: 1px;
+  --middle-s: -1;
+  animation: ts-toggle 0.8s linear forwards;
+}
+
+/* 3 / ok — mixed (default) */
+.turbulence-selector .ts-option.ts-ok {
+  --step-1-rx: 4deg;
+  --step-1-ry: -22deg;
+  --step-1-rz: 6deg;
+  --step-2-rx: 4deg;
+  --step-2-ry: 22deg;
+  --step-2-rz: -6deg;
+}
+.turbulence-selector .ts-option.ts-ok .ts-face::before {
+  --l: 12px;
+  --t: 17px;
+  --h: 4px;
+  --w: 4px;
+  --br: 50%;
+  box-shadow: 12px 0 0 var(--e, var(--normal-eye));
+}
+.turbulence-selector .ts-option.ts-ok .ts-face::after {
+  --l: 13px;
+  --t: 26px;
+  --w: 14px;
+  --h: 2px;
+  --br: 1px;
+  --b: var(--m, var(--normal-mouth));
+}
+.turbulence-selector .ts-option.ts-ok input:checked + .ts-face::before {
+  --middle-s-y: 0.35;
+  animation: ts-toggle 0.2s linear forwards;
+}
+.turbulence-selector .ts-option.ts-ok input:checked + .ts-face::after {
+  --middle-s-x: 0.5;
+  animation: ts-toggle 0.7s linear forwards;
+}
+
+/* 4 / sad — restless */
+.turbulence-selector .ts-option.ts-sad {
+  --step-1-rx: 20deg;
+  --step-1-ry: -12deg;
+  --step-2-rx: -18deg;
+  --step-2-ry: 14deg;
+}
+.turbulence-selector .ts-option.ts-sad .ts-face::before,
+.turbulence-selector .ts-option.ts-sad .ts-face::after {
+  --b: var(--active-tear);
+  --sc: 0;
+  --w: 5px;
+  --h: 5px;
+  --t: 15px;
+  --br: 50%;
+}
+.turbulence-selector .ts-option.ts-sad .ts-face::after {
+  --l: 25px;
+}
+.turbulence-selector .ts-option.ts-sad .ts-face svg.ts-eye {
+  --t: 16px;
+}
+.turbulence-selector .ts-option.ts-sad .ts-face svg.ts-mouth {
+  --t: 24px;
+  stroke-dasharray: 9.5;
+  stroke-dashoffset: 33.25;
+}
+.turbulence-selector .ts-option.ts-sad input:checked + .ts-face::before,
+.turbulence-selector .ts-option.ts-sad input:checked + .ts-face::after {
+  animation: ts-tear 0.6s linear forwards;
+}
+
+/* 5 / angry — turbulent */
+.turbulence-selector .ts-option.ts-angry {
+  --step-1-rx: -24deg;
+  --step-1-ry: 20deg;
+  --step-2-rx: -24deg;
+  --step-2-ry: -20deg;
+}
+.turbulence-selector .ts-option.ts-angry .ts-face::before {
+  --r: 20deg;
+}
+.turbulence-selector .ts-option.ts-angry .ts-face::after {
+  --l: 23px;
+  --r: -20deg;
+}
+.turbulence-selector .ts-option.ts-angry .ts-face svg.ts-eye {
+  stroke-dasharray: 4.55;
+  stroke-dashoffset: 8.15;
+}
+.turbulence-selector .ts-option.ts-angry input:checked {
+  animation: ts-angry 1s linear;
+}
+.turbulence-selector .ts-option.ts-angry input:checked + .ts-face::before {
+  --middle-y: -2px;
+  --middle-r: 22deg;
+  animation: ts-toggle 0.8s linear forwards;
+}
+.turbulence-selector .ts-option.ts-angry input:checked + .ts-face::after {
+  --middle-y: 1px;
+  --middle-r: -18deg;
+  animation: ts-toggle 0.8s linear forwards;
+}
+
+/* --- Selected / hover / active states ----------------------------------- */
+
+.turbulence-selector .ts-option input:checked {
+  --sb: var(--active);
+  --sh: var(--active-shadow);
+  --sht: var(--active-shadow-top);
+}
+.turbulence-selector .ts-option input:checked + .ts-face {
+  --m: var(--active-mouth);
+  --e: var(--active-eye);
+  animation: ts-shake 0.8s linear forwards;
+}
+
+.turbulence-selector .ts-option input:not(:checked):hover {
+  --sb: var(--hover);
+  --sht: var(--hover-shadow-top);
+}
+.turbulence-selector .ts-option input:not(:checked):active {
+  transform: scale(0.925);
+}
+.turbulence-selector .ts-option input:not(:checked):active + .ts-face {
+  transform: scale(0.925);
+}
+
+/* Uiverse-style lift + scale on hover (replaces the original `scale(1.08)`). */
+.turbulence-selector .ts-option:hover {
+  transform: translateY(-5px) scale(1.1);
+}
+
+/* --- Hover tooltip ------------------------------------------------------ */
+
+.turbulence-selector .ts-option::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  top: -26px;
+  transform: translateX(-50%) translateY(4px);
+  background: var(--tip-bg);
+  color: var(--tip-fg);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.turbulence-selector .ts-option:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* --- Animations --------------------------------------------------------- */
+
+@keyframes ts-shake {
+  30% {
+    transform:
+      perspective(240px)
+      rotateX(var(--step-1-rx, 0deg))
+      rotateY(var(--step-1-ry, 0deg))
+      rotateZ(var(--step-1-rz, 0deg))
+      translateZ(10px);
+  }
+  60% {
+    transform:
+      perspective(240px)
+      rotateX(var(--step-2-rx, 0deg))
+      rotateY(var(--step-2-ry, 0deg))
+      rotateZ(var(--step-2-rz, 0deg))
+      translateZ(10px);
+  }
+  100% {
+    transform: perspective(240px) translateZ(4px);
+  }
+}
+
+@keyframes ts-tear {
+  0% {
+    opacity: 0;
+    transform: translateY(-2px) scale(0) translateZ(0);
+  }
+  20%, 80% {
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(12px) scale(0.6, 1.2) translateZ(0);
+  }
+  100% {
+    opacity: 0;
+    transform:
+      translateY(24px) translateX(4px)
+      rotateZ(-30deg) scale(0.7, 1.1)
+      translateZ(0);
+  }
+}
+
+@keyframes ts-toggle {
+  50% {
+    transform:
+      translateY(var(--middle-y, 0))
+      scale(
+        var(--middle-s-x, var(--middle-s, 1)),
+        var(--middle-s-y, var(--middle-s, 1))
+      )
+      rotate(var(--middle-r, 0deg));
+  }
+}
+
+@keyframes ts-angry {
+  40% { background: var(--active); }
+  45% {
+    box-shadow:
+      inset 3px -3px 4px var(--active-shadow),
+      inset 0 8px 10px var(--active-shadow-angry);
+  }
+}
+
+/* --- Reduced motion ------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .turbulence-selector .ts-option,
+  .turbulence-selector .ts-option input,
+  .turbulence-selector .ts-option .ts-face,
+  .turbulence-selector .ts-option .ts-face svg {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

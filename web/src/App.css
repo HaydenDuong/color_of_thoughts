@@ -107,6 +107,89 @@ body {
   background: #F5EFE6;
 }
 
+/* --- Turbulence block + action buttons --------------------------------- */
+
+.turbulence-block {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.turbulence-q {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #e8e8ee;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.turbulence-sub {
+  font-weight: 400;
+  font-size: 0.78rem;
+  color: #9a9aa8;
+  letter-spacing: 0.01em;
+}
+
+.actions-row {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.btn {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.92rem;
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: #f8da69;
+  color: #1a1608;
+  border-color: #e6c348;
+  box-shadow: 0 6px 16px -8px rgba(248, 218, 105, 0.55);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: #fbe281;
+  border-color: #f0cf5b;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: #c9c9d4;
+  border-color: #3a3a48;
+}
+
+.btn-secondary:not(:disabled):hover {
+  background: #1a1a22;
+  border-color: #55556a;
+  color: #f1f1f5;
+}
+
 .palette-row {
   display: flex;
   width: 100%;

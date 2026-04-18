@@ -100,8 +100,12 @@ function PhysicsGroup({ entries }: PhysicsGroupProps) {
   /**
    * Reconcile the entries list with our state Map. Done at render time so
    * the mesh renders can read initial positions synchronously.
-   * - New ids → `seededInitialState`.
-   * - Disappeared ids → removed from state + mesh refs.
+   *  - New ids → `seededInitialState` (scattered inside the rating's band).
+   *  - Disappeared ids → removed from state + mesh refs.
+   *  - Existing ids whose rating changed (re-upload with new turbulence) →
+   *    just update the stored `turbulence` so the next step picks up the
+   *    new band spring + jitter; positions/velocities carry over so there
+   *    is no visual teleport.
    */
   {
     const states = statesRef.current
@@ -113,11 +117,19 @@ function PhysicsGroup({ entries }: PhysicsGroupProps) {
       }
     }
     for (const e of entries) {
-      if (!states.has(e.participantId)) {
+      const existing = states.get(e.participantId)
+      if (!existing) {
         states.set(
           e.participantId,
-          seededInitialState(e.participantId, bounds, SPHERE_RADIUS),
+          seededInitialState(
+            e.participantId,
+            bounds,
+            SPHERE_RADIUS,
+            e.turbulence,
+          ),
         )
+      } else if (existing.turbulence !== e.turbulence) {
+        existing.turbulence = e.turbulence
       }
     }
   }
@@ -133,16 +145,10 @@ function PhysicsGroup({ entries }: PhysicsGroupProps) {
     return () => window.removeEventListener('mousemove', onMove)
   }, [])
 
-  // Tuned physics config. Reduced-motion users get a slower, calmer tank.
+  // Tank-level physics config. Per-sphere speed/jitter now come from the
+  // turbulence rating inside `stepPhysics`; we just forward reducedMotion.
   const physicsConfig = useMemo(
-    () =>
-      reducedMotion
-        ? {
-            ...DEFAULT_PHYSICS_CONFIG,
-            ambientJitter: 0.0015,
-            maxSpeed: 0.8,
-          }
-        : DEFAULT_PHYSICS_CONFIG,
+    () => ({ ...DEFAULT_PHYSICS_CONFIG, reducedMotion }),
     [reducedMotion],
   )
 
@@ -226,6 +232,7 @@ function WallSphereMesh({ entry, initialPosition, meshesRef }: WallSphereMeshPro
         <PaletteSphereMaterial
           palette={entry.palette}
           seed={entry.participantId}
+          turbulence={entry.turbulence}
           animate
         />
       ) : (

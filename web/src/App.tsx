@@ -2,6 +2,10 @@ import { useCallback, useId, useState } from 'react'
 import { SiteNav } from './components/SiteNav'
 import { ColorSphere } from './components/ColorSphere'
 import {
+  TurbulenceSelector,
+  type TurbulenceRating,
+} from './components/TurbulenceSelector'
+import {
   extractDominantColor,
   loadImageFromFile,
   type DominantColorResult,
@@ -9,18 +13,37 @@ import {
 import { getSupabasePublicConfig } from './lib/env'
 import { getSupabaseBrowserClient } from './lib/supabaseBrowser'
 import { ensureParticipantAndUpsertSubmission } from './lib/syncSubmission'
+import { TURBULENCE_DEFAULT } from './lib/turbulence'
 import './App.css'
 
-type SyncState =
+/**
+ * Commit lifecycle for a single preview session:
+ *   idle   — photo uploaded, selector live, nothing written yet
+ *   saving — user hit "Send to wall", upsert in flight
+ *   saved  — row written, sphere is now on the wall
+ *   error  — upsert failed
+ *   local  — Supabase not configured (preview-only build)
+ */
+type CommitState =
   | { kind: 'idle' }
-  | { kind: 'local' }
   | { kind: 'saving' }
   | { kind: 'saved'; displayName: string; participantId: string }
   | { kind: 'error'; message: string }
+  | { kind: 'local' }
 
 /**
- * Phase 1: image → palette (k-means) + primary color → 3D "cloud" sphere
- * + optional Supabase persistence (`participants` + `submissions` upsert).
+ * Phase 1 upload page.
+ *
+ * New explicit-commit flow (so participants see their rating take effect
+ * before it is saved):
+ *   1. User picks an image → we extract palette + primary color and render
+ *      the blob locally. Nothing hits Supabase yet.
+ *   2. A turbulence selector lets them pick 1..5. As they tap, the blob's
+ *      breathing/churning shader uniforms update live (via
+ *      `PaletteSphereMaterial`'s `useEffect`, not a new material instance).
+ *   3. "Send to wall" commits palette + primary + turbulence via
+ *      `ensureParticipantAndUpsertSubmission`; only now does the wall see it.
+ *   4. "Retake photo" resets everything so they can try a different sheet.
  */
 export function App() {
   const inputId = useId()
@@ -28,74 +51,100 @@ export function App() {
   const [result, setResult] = useState<DominantColorResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [syncState, setSyncState] = useState<SyncState>({ kind: 'idle' })
+  const [turbulence, setTurbulence] =
+    useState<TurbulenceRating>(TURBULENCE_DEFAULT)
+  const [commitState, setCommitState] = useState<CommitState>({ kind: 'idle' })
 
-  const onFile = useCallback(async (fileList: FileList | null) => {
-    const file = fileList?.[0]
-    if (!file || !file.type.startsWith('image/')) {
-      setError('Please choose an image file.')
-      setResult(null)
-      setSyncState({ kind: 'idle' })
-      return
-    }
+  const hasSupabase = Boolean(
+    getSupabasePublicConfig() && getSupabaseBrowserClient(),
+  )
 
-    setBusy(true)
-    setError(null)
+  const resetAll = useCallback(() => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    setPreviewUrl(null)
     setResult(null)
-    setSyncState({ kind: 'idle' })
+    setError(null)
+    setTurbulence(TURBULENCE_DEFAULT)
+    setCommitState({ kind: 'idle' })
+  }, [previewUrl])
 
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl)
-    }
-    const nextPreview = URL.createObjectURL(file)
-    setPreviewUrl(nextPreview)
-
-    try {
-      const img = await loadImageFromFile(file)
-      const out = extractDominantColor(img)
-      setResult(out)
-
-      const cfg = getSupabasePublicConfig()
-      const supabase = getSupabaseBrowserClient()
-
-      if (!cfg || !supabase) {
-        setSyncState({ kind: 'local' })
+  const onFile = useCallback(
+    async (fileList: FileList | null) => {
+      const file = fileList?.[0]
+      if (!file || !file.type.startsWith('image/')) {
+        setError('Please choose an image file.')
+        setResult(null)
+        setCommitState({ kind: 'idle' })
         return
       }
 
-      setSyncState({ kind: 'saving' })
+      setBusy(true)
+      setError(null)
+      setResult(null)
+      setCommitState({ kind: 'idle' })
+      // Rating resets whenever a new photo is chosen so people don't carry
+      // a stale "Turbulent" from a previous attempt onto a new drawing.
+      setTurbulence(TURBULENCE_DEFAULT)
+
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+      const nextPreview = URL.createObjectURL(file)
+      setPreviewUrl(nextPreview)
+
       try {
-        const participant = await ensureParticipantAndUpsertSubmission(
-          supabase,
-          cfg.roomId,
-          out,
-        )
-        setSyncState({
-          kind: 'saved',
-          displayName: participant.displayName,
-          participantId: participant.id,
-        })
-      } catch (syncErr) {
-        const msg =
-          syncErr instanceof Error
-            ? syncErr.message
-            : 'Could not save to Supabase.'
-        setSyncState({ kind: 'error', message: msg })
+        const img = await loadImageFromFile(file)
+        const out = extractDominantColor(img)
+        setResult(out)
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Something went wrong'
+        setError(message)
+      } finally {
+        setBusy(false)
       }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Something went wrong'
-      setError(message)
-      setSyncState({ kind: 'idle' })
-    } finally {
-      setBusy(false)
+    },
+    [previewUrl],
+  )
+
+  const onSend = useCallback(async () => {
+    if (!result) return
+
+    const cfg = getSupabasePublicConfig()
+    const supabase = getSupabaseBrowserClient()
+    if (!cfg || !supabase) {
+      setCommitState({ kind: 'local' })
+      return
     }
-  }, [previewUrl])
+
+    setCommitState({ kind: 'saving' })
+    try {
+      const participant = await ensureParticipantAndUpsertSubmission(
+        supabase,
+        cfg.roomId,
+        result,
+        turbulence,
+      )
+      setCommitState({
+        kind: 'saved',
+        displayName: participant.displayName,
+        participantId: participant.id,
+      })
+    } catch (e) {
+      const message =
+        e instanceof Error ? e.message : 'Could not save to Supabase.'
+      setCommitState({ kind: 'error', message })
+    }
+  }, [result, turbulence])
 
   const cssRgb = result
     ? `rgb(${result.r}, ${result.g}, ${result.b})`
     : undefined
   const textureSeed =
-    syncState.kind === 'saved' ? syncState.participantId : undefined
+    commitState.kind === 'saved' ? commitState.participantId : undefined
+
+  const sending = commitState.kind === 'saving'
+  const sent = commitState.kind === 'saved'
+  // After a successful send the selector locks so the saved rating matches
+  // what is on the wall. Re-upload clears everything and unlocks again.
+  const selectorDisabled = sending || sent
 
   return (
     <div className="app">
@@ -103,9 +152,10 @@ export function App() {
       <header className="header">
         <h1>Color of Thoughts</h1>
         <p className="lede">
-          Phase 1: upload a photo of your drawing — we extract its palette and render a 3D sphere
-          that reflects the composition of colors. Your sphere is saved to the exhibition wall
-          (same anonymous name on this device until you clear site data).
+          Phase 1: upload a photo of your drawing — we extract its palette and
+          render a 3D sphere that reflects the composition of colors. Pick how
+          turbulent your day feels; when you tap Send the sphere joins the
+          exhibition wall.
         </p>
       </header>
 
@@ -118,7 +168,7 @@ export function App() {
           className="file-input"
           type="file"
           accept="image/*"
-          disabled={busy}
+          disabled={busy || sending}
           onChange={(e) => void onFile(e.target.files)}
         />
         {busy && <p className="status">Processing…</p>}
@@ -150,6 +200,7 @@ export function App() {
                 color={cssRgb!}
                 palette={result.palette}
                 textureSeed={textureSeed}
+                turbulence={turbulence}
                 className="sphere-wrap"
               />
 
@@ -173,6 +224,43 @@ export function App() {
                 </div>
               )}
 
+              <div className="turbulence-block">
+                <p className="turbulence-q">
+                  How turbulent is your day?
+                  <span className="turbulence-sub">
+                    calm → turbulent · hover a face for its label
+                  </span>
+                </p>
+                <TurbulenceSelector
+                  value={turbulence}
+                  onChange={setTurbulence}
+                  disabled={selectorDisabled}
+                />
+              </div>
+
+              <div className="actions-row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void onSend()}
+                  disabled={sending || sent || !hasSupabase}
+                >
+                  {sending
+                    ? 'Sending…'
+                    : sent
+                      ? 'Sent'
+                      : 'Send to wall'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={resetAll}
+                  disabled={sending}
+                >
+                  Retake photo
+                </button>
+              </div>
+
               <div className="meta" aria-live="polite">
                 <p className="hex">
                   <span className="meta-label">Primary hex (accessibility):</span>{' '}
@@ -184,38 +272,50 @@ export function App() {
                 </p>
                 <p className="uniformity">
                   <span className="meta-label">Palette size:</span>{' '}
-                  {result.palette.length} color{result.palette.length === 1 ? '' : 's'}{' '}
-                  &middot; <span className="meta-label">uniformity:</span>{' '}
+                  {result.palette.length} color
+                  {result.palette.length === 1 ? '' : 's'} &middot;{' '}
+                  <span className="meta-label">uniformity:</span>{' '}
                   {result.uniformityScore.toFixed(2)}
                 </p>
 
-                {syncState.kind === 'local' && (
+                {!hasSupabase && commitState.kind === 'idle' && (
                   <p className="sync sync-local">
                     <strong>Local preview only.</strong> Add{' '}
-                    <code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_ANON_KEY</code>, and{' '}
-                    <code>VITE_DEFAULT_ROOM_ID</code> to <code>web/.env.local</code> (see{' '}
-                    <code>.env.example</code>) to save your sphere to the database.
+                    <code>VITE_SUPABASE_URL</code>,{' '}
+                    <code>VITE_SUPABASE_ANON_KEY</code>, and{' '}
+                    <code>VITE_DEFAULT_ROOM_ID</code> to{' '}
+                    <code>web/.env.local</code> (see{' '}
+                    <code>.env.example</code>) to enable sending to the wall.
                   </p>
                 )}
-                {syncState.kind === 'saving' && (
+                {commitState.kind === 'local' && (
+                  <p className="sync sync-local">
+                    <strong>Supabase is not configured.</strong> Nothing was
+                    saved; configure env vars and try again.
+                  </p>
+                )}
+                {commitState.kind === 'saving' && (
                   <p className="sync sync-saving">Saving to Supabase…</p>
                 )}
-                {syncState.kind === 'saved' && (
+                {commitState.kind === 'saved' && (
                   <p className="sync sync-saved">
-                    <strong>Saved.</strong> You appear as <strong>{syncState.displayName}</strong>.
-                    Re-upload updates your sphere (one per device in this room).
+                    <strong>Sent.</strong> You appear as{' '}
+                    <strong>{commitState.displayName}</strong>. Re-upload
+                    replaces your sphere (one per device in this room).
                   </p>
                 )}
-                {syncState.kind === 'error' && (
+                {commitState.kind === 'error' && (
                   <p className="sync sync-error" role="status">
-                    <strong>Save failed.</strong> {syncState.message}
+                    <strong>Save failed.</strong> {commitState.message}
                   </p>
                 )}
 
                 <p className="hint">
-                  The sphere's surface shows a blurred composition of your image's colors,
-                  weighted by how much of the picture each color covers. Near-white paper is
-                  filtered before extraction.
+                  The sphere's surface shows a blurred composition of your
+                  image's colors, weighted by how much of the picture each
+                  color covers. Near-white paper is filtered before
+                  extraction. Your turbulence rating drives the blob's
+                  breathing and where it sits on the wall.
                 </p>
               </div>
             </>

@@ -1,8 +1,13 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { PaletteColor } from '../lib/colorFromImage'
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion'
+import {
+  shaderMultipliers,
+  TURBULENCE_DEFAULT,
+} from '../lib/turbulence'
+import type { TurbulenceRating } from './TurbulenceSelector'
 
 /**
  * "Color of Thoughts" blob — Codrops "Insomnia" approach, adapted to our palette.
@@ -38,6 +43,8 @@ type Props = {
   palette: PaletteColor[]
   /** Stable seed (participant id) — drives per-sphere phase so 50 wall spheres don't all look the same. */
   seed: string
+  /** 1..5 rating; scales breathing/churning uniforms live without re-compiling the material. */
+  turbulence?: TurbulenceRating
   /** Disable per-frame uniform updates (rarely useful; mostly for tests). */
   animate?: boolean
 }
@@ -276,7 +283,27 @@ void main() {
 }
 `
 
-export function PaletteSphereMaterial({ palette, seed, animate = true }: Props) {
+/**
+ * Base uniform values for turbulence = 3 (every multiplier = 1.0).
+ * `shaderMultipliers(rating)` scales these up or down to produce the final
+ * per-frame value. Keeping the base here means the rating-to-look mapping
+ * stays in `lib/turbulence.ts` and this file only does pure rendering.
+ */
+function baseUniformValues(reducedMotion: boolean) {
+  return {
+    speed:    reducedMotion ? 0.08 : 0.28,
+    strength: reducedMotion ? 0.15 : 0.22,
+    amp:      reducedMotion ? 1.6  : 3.2,
+    breath:   reducedMotion ? 0.02 : 0.07,
+  }
+}
+
+export function PaletteSphereMaterial({
+  palette,
+  seed,
+  turbulence = TURBULENCE_DEFAULT,
+  animate = true,
+}: Props) {
   const matRef = useRef<THREE.ShaderMaterial | null>(null)
   const reducedMotion = usePrefersReducedMotion()
 
@@ -289,21 +316,28 @@ export function PaletteSphereMaterial({ palette, seed, animate = true }: Props) 
     .map((p) => `${p.hex}:${p.weight.toFixed(4)}`)
     .join('|')
 
+  // Capture the turbulence value at mount time so the initial uniforms are
+  // already correct. Subsequent changes are applied via the `useEffect`
+  // below (which mutates `matRef.current.uniforms.*.value` in place — this
+  // is the critical bit that keeps the material program compiled and the
+  // animation running through preview updates).
+  const initialTurbulenceRef = useRef(turbulence)
+
   const { uniforms, materialKey } = useMemo(() => {
     const { colors, weights, count } = prepareTopColors(palette)
     const phase = seedToUnit(seed)
+    const base = baseUniformValues(reducedMotion)
+    const m = shaderMultipliers(initialTurbulenceRef.current, reducedMotion)
 
-    // Tuned for a unit sphere. Breath and twist are softened vs Codrops so
-    // ~50 wall spheres read cleanly without dominating each other.
     const u = {
       uTime:          { value: 0 },
-      uSpeed:         { value: reducedMotion ? 0.08 : 0.28 },
+      uSpeed:         { value: base.speed * m.speed },
       uNoiseDensity:  { value: 1.8 },
-      uNoiseStrength: { value: 0.22 },
+      uNoiseStrength: { value: base.strength * m.strength },
       uFreq:          { value: 3.0 },
-      uAmp:           { value: reducedMotion ? 1.6 : 3.2 },
+      uAmp:           { value: base.amp * m.amp },
       uOffset:        { value: phase * Math.PI * 2 },
-      uBreathAmp:     { value: reducedMotion ? 0.02 : 0.07 },
+      uBreathAmp:     { value: base.breath * m.breath },
       uPhase:         { value: phase },
       uColors:        { value: colors },
       uWeights:       { value: weights },
@@ -314,9 +348,27 @@ export function PaletteSphereMaterial({ palette, seed, animate = true }: Props) 
       materialKey: `${seed}:${reducedMotion}:${paletteKey}`,
     }
     // `palette` is read for its initial values; `paletteKey` captures the
-    // meaningful identity, so we depend on it instead of the array ref.
+    // meaningful identity. `turbulence` intentionally omitted — changing it
+    // should NOT rebuild the material (would reset `uTime` and freeze the
+    // animation); the effect below mutates uniform values in place instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paletteKey, seed, reducedMotion])
+
+  // Live-update the breathing/churning uniforms when the parent changes
+  // `turbulence`. Because we write to `uniforms.*.value` (not replacing the
+  // object) three.js sees no structural change, so the compiled program and
+  // its `uTime` reference stay intact — the only way to animate smoothly
+  // across preview rating taps.
+  useEffect(() => {
+    const u = matRef.current?.uniforms
+    if (!u) return
+    const base = baseUniformValues(reducedMotion)
+    const m = shaderMultipliers(turbulence, reducedMotion)
+    u.uSpeed.value = base.speed * m.speed
+    u.uNoiseStrength.value = base.strength * m.strength
+    u.uAmp.value = base.amp * m.amp
+    u.uBreathAmp.value = base.breath * m.breath
+  }, [turbulence, reducedMotion])
 
   useFrame(({ clock }) => {
     if (!animate) return

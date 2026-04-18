@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { PaletteColor } from './colorFromImage'
+import { normalizeTurbulence } from './turbulence'
+import type { TurbulenceRating } from '../components/TurbulenceSelector'
 
 /** One sphere on the exhibition wall (joined from submissions + participants). */
 export type WallEntry = {
@@ -10,6 +12,7 @@ export type WallEntry = {
   b: number
   hex: string
   palette: PaletteColor[]
+  turbulence: TurbulenceRating
 }
 
 type ParticipantEmbed = {
@@ -24,6 +27,7 @@ type SubmissionJoinRow = {
   b: number
   hex: string
   palette: unknown
+  turbulence: number | null
   /** PostgREST may return object or single-element array depending on client inference */
   participants: ParticipantEmbed | ParticipantEmbed[]
 }
@@ -70,6 +74,7 @@ export async function fetchWallSubmissions(
       b,
       hex,
       palette,
+      turbulence,
       participants!inner ( display_name, room_id )
     `,
     )
@@ -90,6 +95,7 @@ export async function fetchWallSubmissions(
       b: row.b,
       hex: row.hex,
       palette: parsePalette(row.palette),
+      turbulence: normalizeTurbulence(row.turbulence),
     }
   })
 }

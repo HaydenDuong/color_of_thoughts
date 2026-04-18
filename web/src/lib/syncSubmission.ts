@@ -7,6 +7,7 @@ import {
   type StoredParticipant,
 } from './participantSession'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { TurbulenceRating } from '../components/TurbulenceSelector'
 
 async function createParticipant(
   supabase: SupabaseClient,
@@ -33,6 +34,7 @@ async function upsertSubmission(
   supabase: SupabaseClient,
   participant: StoredParticipant,
   color: DominantColorResult,
+  turbulence: TurbulenceRating,
 ): Promise<void> {
   const { error } = await supabase.from('submissions').upsert(
     {
@@ -43,6 +45,7 @@ async function upsertSubmission(
       hex: color.hex,
       uniformity_score: color.uniformityScore,
       palette: color.palette,
+      turbulence,
     },
     { onConflict: 'participant_id' },
   )
@@ -63,6 +66,7 @@ export async function ensureParticipantAndUpsertSubmission(
   supabase: SupabaseClient,
   roomId: string,
   color: DominantColorResult,
+  turbulence: TurbulenceRating,
 ): Promise<StoredParticipant> {
   let participant = loadStoredParticipant(roomId)
 
@@ -71,13 +75,13 @@ export async function ensureParticipantAndUpsertSubmission(
   }
 
   try {
-    await upsertSubmission(supabase, participant, color)
+    await upsertSubmission(supabase, participant, color, turbulence)
     return participant
   } catch {
     // Stale participant_id (DB was reset, row deleted, etc.) — rebuild identity and retry once.
     clearStoredParticipant(roomId)
     participant = await createParticipant(supabase, roomId)
-    await upsertSubmission(supabase, participant, color)
+    await upsertSubmission(supabase, participant, color, turbulence)
     return participant
   }
 }
