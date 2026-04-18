@@ -7,22 +7,30 @@ import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion'
 import {
   DEFAULT_PHYSICS_CONFIG,
   seededInitialState,
-  stepPhysics,
+  stepBandsPhysics,
+  stepFlowPhysics,
+  stepOrbitPhysics,
   type Bounds,
   type PhysicsSphere,
+  type WallMode,
 } from '../lib/wallPhysics'
 
 /**
  * Exhibition wall scene.
  *
- * Each participant gets a sphere that moves with simple 2D billiard physics:
- * the camera's visible rectangle at the sphere plane is the tank, spheres
- * bounce off the walls and off each other with light damping, and a small
- * ambient jitter keeps motion alive indefinitely.
+ * Each participant gets a sphere that moves with 2D physics. Three wall
+ * modes are available (selected by parent via `mode` prop):
+ *
+ *   - `flow`  (default) : soft vertical gradient + per-rating motion character.
+ *   - `orbit`           : concentric orbits around the canvas center.
+ *   - `bands`           : hidden 3-layer comparison mode (URL: ?mode=bands).
+ *
+ * Switching modes is state-preserving — the same `PhysicsSphere` objects
+ * carry over; only the step function changes and each mode's forces guide
+ * the ensemble into its new layout over a second or two.
  *
  * The whole scene also rotates gently toward the mouse (Codrops-style
- * parallax) for a subtle "alive" feel; with no mouse on the exhibition
- * machine it simply stays still.
+ * parallax); with no mouse on the exhibition machine it stays still.
  */
 
 const SPHERE_RADIUS = 0.4
@@ -35,10 +43,12 @@ const WALL_PAD = 0.15
 
 export type WallSceneProps = {
   entries: WallEntry[]
+  /** Which physics mode drives motion. Defaults to `flow`. */
+  mode?: WallMode
   className?: string
 }
 
-export function WallScene({ entries, className }: WallSceneProps) {
+export function WallScene({ entries, mode = 'flow', className }: WallSceneProps) {
   return (
     <div className={className} role="img" aria-label="Exhibition wall of color spheres">
       <Canvas
@@ -51,7 +61,7 @@ export function WallScene({ entries, className }: WallSceneProps) {
         <ambientLight intensity={0.75} />
         <directionalLight position={[6, 8, 10]} intensity={0.9} color="#fff6e8" />
         <directionalLight position={[-5, -3, -4]} intensity={0.3} color="#dfe6ff" />
-        <PhysicsGroup entries={entries} />
+        <PhysicsGroup entries={entries} mode={mode} />
       </Canvas>
     </div>
   )
@@ -59,25 +69,41 @@ export function WallScene({ entries, className }: WallSceneProps) {
 
 type PhysicsGroupProps = {
   entries: WallEntry[]
+  mode: WallMode
 }
 
 /**
  * Owns the physics state (a Map keyed by participantId, held in a ref) and
  * drives one `useFrame` loop that:
- *   1. Steps the physics.
+ *   1. Steps the active mode's physics (with elapsed time for flow/orbit).
  *   2. Writes each sphere's world position onto its mesh ref.
  *   3. Applies a lerped mouse-parallax rotation to the parent group.
  *
  * Reconciliation with `entries` happens synchronously at render time so new
  * spheres have initial state before their mesh mounts.
+ *
+ * Mode is tracked via a ref so `useFrame` always reads the current value
+ * without rebuilding the callback (which would briefly halt motion).
  */
-function PhysicsGroup({ entries }: PhysicsGroupProps) {
+function PhysicsGroup({ entries, mode }: PhysicsGroupProps) {
   const { size, camera } = useThree()
   const reducedMotion = usePrefersReducedMotion()
 
   const statesRef = useRef<Map<string, PhysicsSphere>>(new Map())
   const meshesRef = useRef<Map<string, THREE.Mesh>>(new Map())
   const groupRef = useRef<THREE.Group>(null)
+
+  const modeRef = useRef<WallMode>(mode)
+  useEffect(() => {
+    // On mode change, clear any flow-only per-sphere state so the new mode
+    // starts clean. Positions + velocities carry over for a smooth handoff.
+    if (modeRef.current !== mode) {
+      for (const s of statesRef.current.values()) {
+        s.nextKickAt = undefined
+      }
+      modeRef.current = mode
+    }
+  }, [mode])
 
   /**
    * Physics tank = what's visible at z=0 with this perspective camera,
@@ -100,12 +126,11 @@ function PhysicsGroup({ entries }: PhysicsGroupProps) {
   /**
    * Reconcile the entries list with our state Map. Done at render time so
    * the mesh renders can read initial positions synchronously.
-   *  - New ids → `seededInitialState` (scattered inside the rating's band).
+   *  - New ids → `seededInitialState` for the current mode.
    *  - Disappeared ids → removed from state + mesh refs.
    *  - Existing ids whose rating changed (re-upload with new turbulence) →
-   *    just update the stored `turbulence` so the next step picks up the
-   *    new band spring + jitter; positions/velocities carry over so there
-   *    is no visual teleport.
+   *    just update the stored `turbulence`; position/velocity carry over so
+   *    there is no visual teleport.
    */
   {
     const states = statesRef.current
@@ -126,6 +151,7 @@ function PhysicsGroup({ entries }: PhysicsGroupProps) {
             bounds,
             SPHERE_RADIUS,
             e.turbulence,
+            mode,
           ),
         )
       } else if (existing.turbulence !== e.turbulence) {
@@ -145,16 +171,24 @@ function PhysicsGroup({ entries }: PhysicsGroupProps) {
     return () => window.removeEventListener('mousemove', onMove)
   }, [])
 
-  // Tank-level physics config. Per-sphere speed/jitter now come from the
-  // turbulence rating inside `stepPhysics`; we just forward reducedMotion.
+  // Tank-level physics config. Per-sphere behavior comes from the
+  // turbulence rating inside each step function; we just forward reducedMotion.
   const physicsConfig = useMemo(
     () => ({ ...DEFAULT_PHYSICS_CONFIG, reducedMotion }),
     [reducedMotion],
   )
 
-  useFrame((_state, dt) => {
+  useFrame((state, dt) => {
     const list = Array.from(statesRef.current.values())
-    stepPhysics(list, dt, bounds, physicsConfig)
+    const t = state.clock.elapsedTime
+    const currentMode = modeRef.current
+    if (currentMode === 'orbit') {
+      stepOrbitPhysics(list, dt, bounds, t, physicsConfig)
+    } else if (currentMode === 'bands') {
+      stepBandsPhysics(list, dt, bounds, physicsConfig)
+    } else {
+      stepFlowPhysics(list, dt, bounds, t, physicsConfig)
+    }
 
     for (const s of list) {
       const mesh = meshesRef.current.get(s.id)

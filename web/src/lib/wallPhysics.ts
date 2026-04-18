@@ -1,4 +1,10 @@
-import { physicsBehavior, normalizeTurbulence } from './turbulence'
+import {
+  bandsBehavior,
+  flowBehavior,
+  flowHomeY,
+  normalizeTurbulence,
+  orbitBehavior,
+} from './turbulence'
 
 /**
  * 2D physics for the exhibition wall.
@@ -7,25 +13,30 @@ import { physicsBehavior, normalizeTurbulence } from './turbulence'
  * camera's visible rectangle at the sphere plane. O(N²) pairwise collision
  * is fine at this count (~1.2k pair checks per frame at 50 spheres).
  *
- * Turbulence-aware (added v2):
- *   - Each sphere carries a `turbulence` rating (1..5). Per-sphere maxSpeed,
- *     ambient jitter (separate X/Y), vertical-home spring and vertical
- *     damping are looked up from `lib/turbulence.ts`.
- *   - The tank is split into three equal horizontal bands. Calm spheres
- *     (1-2) live in the bottom band and are strongly damped vertically so
- *     they flow mostly horizontally. Turbulent spheres (4-5) live up top
- *     with big jitter. Mixed (3) float freely in the middle band.
- *   - Collisions still apply tank-wide (a bouncy sphere can visit other
- *     bands) and the spring pulls it back home once the impulse ebbs.
+ * Three wall modes live side-by-side, each with its own `step*` function:
+ *
+ *   - **Flow** (default, `stepFlowPhysics`): soft vertical gradient pulls
+ *     calm spheres toward the bottom and turbulent toward the top. Calm
+ *     spheres steer along a slowly rotating "drift" heading for curvy
+ *     graceful paths; turbulent spheres get periodic impulse kicks for
+ *     jagged agitation. All spheres share the full tank.
+ *
+ *   - **Orbit** (`stepOrbitPhysics`): each sphere targets a concentric
+ *     orbit around (0,0). Calm = wide, slow, stable. Turbulent = tight,
+ *     fast, with radius wobble. A spring pulls spheres toward their orbit
+ *     target so collisions knock them off briefly before they return.
+ *
+ *   - **Bands** (`stepBandsPhysics`, hidden via `/wall?mode=bands`): original
+ *     3-layer layout, kept for comparison. Hard horizontal stripes per
+ *     rating tier with a strong home-y spring.
  *
  * The engine is framework-agnostic: it mutates a plain array of
  * `PhysicsSphere` objects. `WallScene` owns the state (a ref-held Map keyed
- * by `participantId`) and calls `stepPhysics` from its `useFrame` loop.
+ * by `participantId`) and calls the active step function from `useFrame`.
  *
- * Why ambient jitter: with restitution < 1, energy dissipates on every
- * collision. Without a trickle of energy in, the wall would slowly settle
- * into clumps. A tiny random nudge per step keeps motion alive indefinitely
- * without feeling "shaken".
+ * Switching modes is state-preserving: the same `PhysicsSphere[]` is reused;
+ * only the step function changes. Positions and velocities carry over and
+ * the new mode's forces smoothly guide the ensemble into its new layout.
  */
 
 export type PhysicsSphere = {
@@ -35,8 +46,13 @@ export type PhysicsSphere = {
   vx: number
   vy: number
   radius: number
-  /** 1..5 — drives this sphere's speed/jitter/band. */
+  /** 1..5 — drives this sphere's speed/jitter/band/orbit characteristics. */
   turbulence: number
+  /**
+   * Simulation time at which the next flow-mode impulse kick fires for
+   * turbulent spheres. Ignored in other modes. Populated on first step.
+   */
+  nextKickAt?: number
 }
 
 export type Bounds = {
@@ -51,7 +67,7 @@ export type PhysicsConfig = {
   restitution: number
   /** Clamp dt so a tab-switch freeze doesn't teleport spheres on resume. */
   maxDt: number
-  /** Apply the reduced-motion variant of the per-rating behavior table. */
+  /** Apply the reduced-motion variant of the per-rating behavior tables. */
   reducedMotion: boolean
 }
 
@@ -61,91 +77,32 @@ export const DEFAULT_PHYSICS_CONFIG: PhysicsConfig = {
   reducedMotion: false,
 }
 
-/**
- * Vertical home (target Y) for a given rating inside `bounds`.
- *
- *   rating 1-2  → bottom band center
- *   rating 3    → middle (tank center, visually strongest for the default)
- *   rating 4-5  → top band center
- *
- * Recomputed per frame so canvas resize flows through without state surgery.
- */
-export function bandHomeY(rating: number, bounds: Bounds): number {
-  const h = bounds.maxY - bounds.minY
-  const bandH = h / 3
-  const r = normalizeTurbulence(rating)
-  if (r <= 2) return bounds.minY + bandH * 0.5
-  if (r >= 4) return bounds.maxY - bandH * 0.5
-  return 0
-}
+export type WallMode = 'flow' | 'orbit' | 'bands'
 
-/**
- * One integration step. Mutates `spheres` in place.
- *
- * Order (per sphere):
- *   1. Apply per-turbulence ambient jitter (separate X / Y amplitudes).
- *   2. Apply home-band spring: `vy += homeK * (homeY - y) * dt`.
- *   3. Apply vertical damping: `vy *= max(0, 1 - yDamp * dt)` so calm
- *      spheres decay to mostly-horizontal motion and don't drift up.
- *   4. Cap speed to the rating's `maxSpeed`.
- *   5. Integrate position.
- *   6. Wall bounce (clamp + flip + global restitution).
- *   7. Pairwise elastic collisions (equal mass, global restitution).
- */
-export function stepPhysics(
-  spheres: PhysicsSphere[],
-  dt: number,
-  bounds: Bounds,
-  config: Partial<PhysicsConfig> = {},
-): void {
-  const cfg = { ...DEFAULT_PHYSICS_CONFIG, ...config }
-  const step = Math.min(dt, cfg.maxDt)
-  if (step <= 0) return
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
 
-  for (const s of spheres) {
-    const b = physicsBehavior(s.turbulence, cfg.reducedMotion)
-
-    if (b.jitterX > 0) s.vx += (Math.random() - 0.5) * b.jitterX
-    if (b.jitterY > 0) s.vy += (Math.random() - 0.5) * b.jitterY
-
-    if (b.homeK > 0) {
-      const targetY = bandHomeY(s.turbulence, bounds)
-      s.vy += b.homeK * (targetY - s.y) * step
-    }
-
-    if (b.yDamp > 0) {
-      const k = Math.max(0, 1 - b.yDamp * step)
-      s.vy *= k
-    }
-
-    const speed = Math.hypot(s.vx, s.vy)
-    if (speed > b.maxSpeed) {
-      const k = b.maxSpeed / speed
-      s.vx *= k
-      s.vy *= k
-    }
-
-    s.x += s.vx * step
-    s.y += s.vy * step
-  }
-
+function applyWallBounce(spheres: PhysicsSphere[], bounds: Bounds, restitution: number) {
   for (const s of spheres) {
     if (s.x - s.radius < bounds.minX) {
       s.x = bounds.minX + s.radius
-      s.vx = Math.abs(s.vx) * cfg.restitution
+      s.vx = Math.abs(s.vx) * restitution
     } else if (s.x + s.radius > bounds.maxX) {
       s.x = bounds.maxX - s.radius
-      s.vx = -Math.abs(s.vx) * cfg.restitution
+      s.vx = -Math.abs(s.vx) * restitution
     }
     if (s.y - s.radius < bounds.minY) {
       s.y = bounds.minY + s.radius
-      s.vy = Math.abs(s.vy) * cfg.restitution
+      s.vy = Math.abs(s.vy) * restitution
     } else if (s.y + s.radius > bounds.maxY) {
       s.y = bounds.maxY - s.radius
-      s.vy = -Math.abs(s.vy) * cfg.restitution
+      s.vy = -Math.abs(s.vy) * restitution
     }
   }
+}
 
+function applyPairCollisions(spheres: PhysicsSphere[], restitution: number) {
   const n = spheres.length
   for (let i = 0; i < n; i++) {
     const a = spheres[i]
@@ -174,7 +131,7 @@ export function stepPhysics(
       if (vRel >= 0) continue
 
       // Equal-mass 1D elastic impulse with coefficient of restitution.
-      const impulse = (1 + cfg.restitution) * 0.5 * vRel
+      const impulse = (1 + restitution) * 0.5 * vRel
       a.vx += impulse * nx
       a.vy += impulse * ny
       b.vx -= impulse * nx
@@ -183,9 +140,248 @@ export function stepPhysics(
   }
 }
 
+function clampSpeed(s: PhysicsSphere, maxSpeed: number) {
+  const speed = Math.hypot(s.vx, s.vy)
+  if (speed > maxSpeed) {
+    const k = maxSpeed / speed
+    s.vx *= k
+    s.vy *= k
+  }
+}
+
+// ---------------------------------------------------------------------------
+// BANDS mode (original 3-layer layout — hidden via /wall?mode=bands)
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard 3-band vertical home for a given rating: rating 1-2 bottom band,
+ * rating 3 middle (y=0), rating 4-5 top band.
+ */
+export function bandHomeY(rating: number, bounds: Bounds): number {
+  const h = bounds.maxY - bounds.minY
+  const bandH = h / 3
+  const r = normalizeTurbulence(rating)
+  if (r <= 2) return bounds.minY + bandH * 0.5
+  if (r >= 4) return bounds.maxY - bandH * 0.5
+  return 0
+}
+
+/**
+ * Original per-band step with strong home-y spring. Kept for the
+ * `/wall?mode=bands` comparison view.
+ */
+export function stepBandsPhysics(
+  spheres: PhysicsSphere[],
+  dt: number,
+  bounds: Bounds,
+  config: Partial<PhysicsConfig> = {},
+): void {
+  const cfg = { ...DEFAULT_PHYSICS_CONFIG, ...config }
+  const step = Math.min(dt, cfg.maxDt)
+  if (step <= 0) return
+
+  for (const s of spheres) {
+    const b = bandsBehavior(s.turbulence, cfg.reducedMotion)
+
+    if (b.jitterX > 0) s.vx += (Math.random() - 0.5) * b.jitterX
+    if (b.jitterY > 0) s.vy += (Math.random() - 0.5) * b.jitterY
+
+    if (b.homeK > 0) {
+      const targetY = bandHomeY(s.turbulence, bounds)
+      s.vy += b.homeK * (targetY - s.y) * step
+    }
+
+    if (b.yDamp > 0) {
+      const k = Math.max(0, 1 - b.yDamp * step)
+      s.vy *= k
+    }
+
+    clampSpeed(s, b.maxSpeed)
+
+    s.x += s.vx * step
+    s.y += s.vy * step
+  }
+
+  applyWallBounce(spheres, bounds, cfg.restitution)
+  applyPairCollisions(spheres, cfg.restitution)
+}
+
+// ---------------------------------------------------------------------------
+// FLOW mode (default — soft gradient + motion character per rating)
+// ---------------------------------------------------------------------------
+
+/**
+ * Soft continuous gradient (rating 1 → bottom, 5 → top). Called by the
+ * flow step; exposed for tests / debug overlays.
+ */
+function flowTargetY(rating: number, bounds: Bounds): number {
+  return flowHomeY(rating, bounds.minY, bounds.maxY)
+}
+
+/**
+ * Calm spheres get a slowly rotating "drift" heading derived deterministically
+ * from their id + elapsed time, so two calm spheres never move identically
+ * yet each traces a smooth curvy path. Velocity is steered toward this
+ * target instead of snapping.
+ */
+function driftHeading(id: string, time: number): { ux: number; uy: number } {
+  const a = hashUnit(id, 11) * Math.PI * 2
+  const b = hashUnit(id, 12) * Math.PI * 2
+  // Two incommensurate sinusoids → non-repeating drift direction.
+  const theta =
+    a +
+    Math.sin(b + time * 0.27) * 1.2 +
+    Math.cos(time * 0.17 + a * 0.5) * 0.8
+  return { ux: Math.cos(theta), uy: Math.sin(theta) * 0.6 }
+}
+
+export function stepFlowPhysics(
+  spheres: PhysicsSphere[],
+  dt: number,
+  bounds: Bounds,
+  time: number,
+  config: Partial<PhysicsConfig> = {},
+): void {
+  const cfg = { ...DEFAULT_PHYSICS_CONFIG, ...config }
+  const step = Math.min(dt, cfg.maxDt)
+  if (step <= 0) return
+
+  for (const s of spheres) {
+    const b = flowBehavior(s.turbulence, cfg.reducedMotion)
+
+    if (b.jitterX > 0) s.vx += (Math.random() - 0.5) * b.jitterX
+    if (b.jitterY > 0) s.vy += (Math.random() - 0.5) * b.jitterY
+
+    // Calm drift: steer velocity toward a slow-rotating target.
+    if (b.driftSpeed > 0 && b.driftSteer > 0) {
+      const { ux, uy } = driftHeading(s.id, time)
+      const targetVx = ux * b.driftSpeed
+      const targetVy = uy * b.driftSpeed
+      const k = Math.min(1, b.driftSteer * step)
+      s.vx += (targetVx - s.vx) * k
+      s.vy += (targetVy - s.vy) * k
+    }
+
+    // Turbulent impulse kicks.
+    if (b.kickStrength > 0 && Number.isFinite(b.kickMin)) {
+      if (s.nextKickAt === undefined) {
+        // First frame for this sphere in flow mode: schedule the first kick.
+        s.nextKickAt = time + b.kickMin + hashUnit(s.id, 7) * (b.kickMax - b.kickMin)
+      }
+      if (time >= s.nextKickAt) {
+        const angle = Math.random() * Math.PI * 2
+        const mag = (0.5 + Math.random() * 0.5) * b.kickStrength
+        s.vx += Math.cos(angle) * mag
+        s.vy += Math.sin(angle) * mag
+        s.nextKickAt = time + b.kickMin + Math.random() * (b.kickMax - b.kickMin)
+      }
+    } else if (s.nextKickAt !== undefined) {
+      // Rating changed down to non-kicking; clear stale schedule.
+      s.nextKickAt = undefined
+    }
+
+    // Weak soft-gradient home-y pull.
+    if (b.homeK > 0) {
+      const targetY = flowTargetY(s.turbulence, bounds)
+      s.vy += b.homeK * (targetY - s.y) * step
+    }
+
+    clampSpeed(s, b.maxSpeed)
+
+    s.x += s.vx * step
+    s.y += s.vy * step
+  }
+
+  applyWallBounce(spheres, bounds, cfg.restitution)
+  applyPairCollisions(spheres, cfg.restitution)
+}
+
+// ---------------------------------------------------------------------------
+// ORBIT mode (concentric attractor field)
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum orbit radius that keeps a sphere fully inside the tank.
+ * Shared helper so the step function and seeded-init agree.
+ */
+function orbitMaxRadius(bounds: Bounds, sphereRadius: number): number {
+  const halfW = Math.min(Math.abs(bounds.minX), Math.abs(bounds.maxX))
+  const halfH = Math.min(Math.abs(bounds.minY), Math.abs(bounds.maxY))
+  return Math.max(0.2, Math.min(halfW, halfH) - sphereRadius)
+}
+
+/**
+ * Current (angle, radius) target for a sphere in orbit mode. Pure function
+ * of id + turbulence + elapsed time so there's no state to persist across
+ * frames or mode switches.
+ */
+function orbitTarget(
+  s: PhysicsSphere,
+  time: number,
+  maxRadius: number,
+  reducedMotion: boolean,
+): { tx: number; ty: number } {
+  const o = orbitBehavior(s.turbulence, reducedMotion)
+
+  const basePhase = hashUnit(s.id, 21) * Math.PI * 2
+  const dir = hashUnit(s.id, 22) < 0.5 ? -1 : 1
+  const angle = basePhase + dir * o.angularVel * time
+
+  const radiusBase = o.radiusFraction * maxRadius
+  const wobblePhase = hashUnit(s.id, 23) * Math.PI * 2
+  const radius = radiusBase * (1 + o.wobbleAmp * Math.sin(wobblePhase + time * o.wobbleFreq))
+
+  return {
+    tx: Math.cos(angle) * radius,
+    ty: Math.sin(angle) * radius,
+  }
+}
+
+export function stepOrbitPhysics(
+  spheres: PhysicsSphere[],
+  dt: number,
+  bounds: Bounds,
+  time: number,
+  config: Partial<PhysicsConfig> = {},
+): void {
+  const cfg = { ...DEFAULT_PHYSICS_CONFIG, ...config }
+  const step = Math.min(dt, cfg.maxDt)
+  if (step <= 0) return
+
+  const sphereR = spheres[0]?.radius ?? 0.4
+  const maxRadius = orbitMaxRadius(bounds, sphereR)
+
+  for (const s of spheres) {
+    const o = orbitBehavior(s.turbulence, cfg.reducedMotion)
+    const { tx, ty } = orbitTarget(s, time, maxRadius, cfg.reducedMotion)
+
+    // Spring toward target.
+    s.vx += o.springK * (tx - s.x) * step
+    s.vy += o.springK * (ty - s.y) * step
+
+    // Damping so collisions settle.
+    const d = Math.max(0, 1 - o.damping * step)
+    s.vx *= d
+    s.vy *= d
+
+    clampSpeed(s, o.maxSpeed)
+
+    s.x += s.vx * step
+    s.y += s.vy * step
+  }
+
+  applyWallBounce(spheres, bounds, cfg.restitution)
+  applyPairCollisions(spheres, cfg.restitution)
+}
+
+// ---------------------------------------------------------------------------
+// Seeded initial state
+// ---------------------------------------------------------------------------
+
 /**
  * Deterministic hash of a string to [0, 1). `salt` lets us derive multiple
- * uncorrelated values from the same id (position x/y, heading, speed).
+ * uncorrelated values from the same id (position x/y, heading, speed,
+ * orbit phase, kick schedule).
  */
 function hashUnit(seed: string, salt: number): number {
   let h = 2166136261 ^ (salt * 0x9e3779b9)
@@ -199,17 +395,23 @@ function hashUnit(seed: string, salt: number): number {
 /**
  * Initial state for a freshly-arrived participant.
  *
- * X is scattered across the full inset bounds; Y is scattered only within
- * the rating's home band (so new spheres arrive already sitting in the
- * correct emotional stripe and the spring doesn't have to yank them there).
- * Heading is random; speed is drawn from `[speedMin, speedMax]` and is
- * later clamped by the rating's `maxSpeed` on the first step.
+ * Placement depends on the current mode so the sphere arrives in a sensible
+ * spot for the visible simulation:
+ *
+ *   - `flow`  : X scattered across the tank; Y near the rating's
+ *               soft-gradient home, with some spread.
+ *   - `orbit` : positioned exactly on the rating's orbit target (for t=0).
+ *   - `bands` : X across the tank; Y inside the rating's band stripe.
+ *
+ * Heading: random; speed small (drawn from `[speedMin, speedMax]`). Per-
+ * mode forces take over from there.
  */
 export function seededInitialState(
   id: string,
   bounds: Bounds,
   radius: number,
   turbulence: number,
+  mode: WallMode = 'flow',
   speedMin = 0.1,
   speedMax = 0.2,
 ): PhysicsSphere {
@@ -219,32 +421,51 @@ export function seededInitialState(
   const s = hashUnit(id, 4)
 
   const rating = normalizeTurbulence(turbulence)
-  const totalH = bounds.maxY - bounds.minY
-  const bandH = totalH / 3
-
-  // Band range on Y, inset by radius so the sphere does not clip the divider.
-  let yMin: number
-  let yMax: number
-  if (rating <= 2) {
-    yMin = bounds.minY + radius
-    yMax = bounds.minY + bandH - radius
-  } else if (rating >= 4) {
-    yMin = bounds.maxY - bandH + radius
-    yMax = bounds.maxY - radius
-  } else {
-    yMin = bounds.minY + bandH + radius
-    yMax = bounds.maxY - bandH - radius
-  }
-  if (yMax < yMin) {
-    // Tank too short for bands — collapse to center.
-    const mid = (bounds.minY + bounds.maxY) / 2
-    yMin = mid
-    yMax = mid
-  }
-
   const innerW = Math.max(0, bounds.maxX - bounds.minX - 2 * radius)
-  const x = bounds.minX + radius + u * innerW
-  const y = yMin + v * (yMax - yMin)
+  const innerH = Math.max(0, bounds.maxY - bounds.minY - 2 * radius)
+
+  let x: number
+  let y: number
+
+  if (mode === 'orbit') {
+    const maxRadius = orbitMaxRadius(bounds, radius)
+    const tmp: PhysicsSphere = {
+      id, x: 0, y: 0, vx: 0, vy: 0, radius, turbulence: rating,
+    }
+    const { tx, ty } = orbitTarget(tmp, 0, maxRadius, false)
+    x = tx
+    y = ty
+  } else if (mode === 'bands') {
+    const totalH = bounds.maxY - bounds.minY
+    const bandH = totalH / 3
+    let yMin: number, yMax: number
+    if (rating <= 2) {
+      yMin = bounds.minY + radius
+      yMax = bounds.minY + bandH - radius
+    } else if (rating >= 4) {
+      yMin = bounds.maxY - bandH + radius
+      yMax = bounds.maxY - radius
+    } else {
+      yMin = bounds.minY + bandH + radius
+      yMax = bounds.maxY - bandH - radius
+    }
+    if (yMax < yMin) {
+      const mid = (bounds.minY + bounds.maxY) / 2
+      yMin = mid
+      yMax = mid
+    }
+    x = bounds.minX + radius + u * innerW
+    y = yMin + v * (yMax - yMin)
+  } else {
+    // flow: soft gradient centered on home-y with ±15% tank-height spread.
+    const homeY = flowHomeY(rating, bounds.minY, bounds.maxY)
+    const spread = innerH * 0.15
+    const yRaw = homeY + (v - 0.5) * 2 * spread
+    const yMin = bounds.minY + radius
+    const yMax = bounds.maxY - radius
+    y = Math.max(yMin, Math.min(yMax, yRaw))
+    x = bounds.minX + radius + u * innerW
+  }
 
   const angle = a * Math.PI * 2
   const speed = speedMin + s * (speedMax - speedMin)
