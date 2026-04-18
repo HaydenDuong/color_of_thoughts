@@ -271,6 +271,15 @@ export function PaletteSphereMaterial({ palette, seed, animate = true }: Props) 
   const matRef = useRef<THREE.ShaderMaterial | null>(null)
   const reducedMotion = usePrefersReducedMotion()
 
+  // Stable string fingerprint of the palette VALUES. Using this (instead of
+  // the `palette` array reference) as the memo dep prevents uniforms churn
+  // when realtime refetch hands us a new array with identical values.
+  // Without this, replacing material.uniforms on every refetch disconnects
+  // uTime from the compiled shader program and the animation freezes.
+  const paletteKey = palette
+    .map((p) => `${p.hex}:${p.weight.toFixed(4)}`)
+    .join('|')
+
   const { uniforms, materialKey } = useMemo(() => {
     const { colors, weights, count } = prepareTopColors(palette)
     const phase = seedToUnit(seed)
@@ -293,9 +302,12 @@ export function PaletteSphereMaterial({ palette, seed, animate = true }: Props) 
     }
     return {
       uniforms: u,
-      materialKey: `${seed}:${reducedMotion}:${palette.map((p) => p.hex).join(',')}`,
+      materialKey: `${seed}:${reducedMotion}:${paletteKey}`,
     }
-  }, [palette, seed, reducedMotion])
+    // `palette` is read for its initial values; `paletteKey` captures the
+    // meaningful identity, so we depend on it instead of the array ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paletteKey, seed, reducedMotion])
 
   useFrame(({ clock }) => {
     if (!animate) return

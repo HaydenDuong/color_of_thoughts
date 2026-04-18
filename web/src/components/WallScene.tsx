@@ -176,10 +176,7 @@ function PhysicsGroup({ entries }: PhysicsGroupProps) {
             key={e.participantId}
             entry={e}
             initialPosition={initPos}
-            registerMesh={(mesh) => {
-              if (mesh) meshesRef.current.set(e.participantId, mesh)
-              else meshesRef.current.delete(e.participantId)
-            }}
+            meshesRef={meshesRef}
           />
         )
       })}
@@ -190,16 +187,34 @@ function PhysicsGroup({ entries }: PhysicsGroupProps) {
 type WallSphereMeshProps = {
   entry: WallEntry
   initialPosition: [number, number, number]
-  registerMesh: (mesh: THREE.Mesh | null) => void
+  meshesRef: React.MutableRefObject<Map<string, THREE.Mesh>>
 }
 
-function WallSphereMesh({ entry, initialPosition, registerMesh }: WallSphereMeshProps) {
+/**
+ * Registers its mesh in the shared `meshesRef` Map on mount and removes it
+ * on unmount. Using a `useEffect` (rather than a function ref) keeps the
+ * registration stable across re-renders — earlier versions re-created the
+ * ref callback every render, which caused harmless but noisy
+ * attach/detach cycles on every realtime refetch.
+ */
+function WallSphereMesh({ entry, initialPosition, meshesRef }: WallSphereMeshProps) {
+  const localMeshRef = useRef<THREE.Mesh | null>(null)
   const hasPalette = entry.palette && entry.palette.length >= 2
   const fallback = `rgb(${entry.r}, ${entry.g}, ${entry.b})`
 
+  useEffect(() => {
+    const mesh = localMeshRef.current
+    if (!mesh) return
+    const map = meshesRef.current
+    map.set(entry.participantId, mesh)
+    return () => {
+      map.delete(entry.participantId)
+    }
+  }, [entry.participantId, meshesRef])
+
   return (
     <mesh
-      ref={registerMesh}
+      ref={localMeshRef}
       position={initialPosition}
       scale={SPHERE_SCALE}
     >
