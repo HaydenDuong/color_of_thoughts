@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import type { WallEntry } from '../lib/wallData'
 import { PaletteSphereMaterial } from './PaletteSphereMaterial'
+import { WaveStage } from './WaveStage'
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion'
 import {
   DEFAULT_PHYSICS_CONFIG,
@@ -18,19 +20,28 @@ import {
 /**
  * Exhibition wall scene.
  *
- * Each participant gets a sphere that moves with 2D physics. Three wall
- * modes are available (selected by parent via `mode` prop):
+ * Two top-level rendering paths, switched on `mode`:
  *
- *   - `flow`  (default) : soft vertical gradient + per-rating motion character.
- *   - `orbit`           : concentric orbits around the canvas center.
- *   - `bands`           : hidden 3-layer comparison mode (URL: ?mode=bands).
+ *   - **Physics modes** (`flow`, `orbit`, `bands`): each participant gets a
+ *     freeform sphere that moves with 2D physics inside the tank.
+ *       - `flow`  (default) : soft vertical gradient + per-rating character.
+ *       - `orbit`           : concentric orbits around the canvas center.
+ *       - `bands`           : hidden 3-layer comparison mode (?mode=bands).
  *
- * Switching modes is state-preserving — the same `PhysicsSphere` objects
- * carry over; only the step function changes and each mode's forces guide
- * the ensemble into its new layout over a second or two.
+ *   - **Scaffold modes** (`wave`): a fixed grid of "scaffold" blobs renders
+ *     a coherent surface (the sea), and each user blob takes a unique cell
+ *     on that grid. There is no freeform physics in these modes — position
+ *     is wholly determined by the surface function + ripples.
  *
- * The whole scene also rotates gently toward the mouse (Codrops-style
- * parallax); with no mouse on the exhibition machine it stays still.
+ * Switching between physics modes is state-preserving (sphere objects carry
+ * over). Switching INTO or OUT of a scaffold mode tears down the other
+ * subtree, which is intentional: the geometries and per-blob assignments
+ * are fundamentally different.
+ *
+ * The whole physics scene rotates gently toward the mouse (Codrops-style
+ * parallax); on the exhibition machine with no mouse it stays still. The
+ * CameraRig handles mode-specific framing — wave mode tilts the camera 18°
+ * for a horizon-line read on the sea.
  */
 
 const SPHERE_RADIUS = 0.4
@@ -68,10 +79,17 @@ export type WallSceneProps = {
   entries: WallEntry[]
   /** Which physics mode drives motion. Defaults to `flow`. */
   mode?: WallMode
+  /**
+   * When true, swap the auto camera (CameraRig + parallax) for mouse
+   * OrbitControls so a developer / supervisor can drag-orbit, scroll-zoom,
+   * and right-drag-pan the scene to inspect it from any angle. Off by
+   * default so the exhibition projector keeps its hands-off framing.
+   */
+  explore?: boolean
   className?: string
 }
 
-export function WallScene({ entries, mode = 'flow', className }: WallSceneProps) {
+export function WallScene({ entries, mode = 'flow', explore = false, className }: WallSceneProps) {
   return (
     <div className={className} role="img" aria-label="Exhibition wall of color spheres">
       <Canvas
@@ -86,15 +104,131 @@ export function WallScene({ entries, mode = 'flow', className }: WallSceneProps)
         <ambientLight intensity={0.75} />
         <directionalLight position={[6, 8, 10]} intensity={0.9} color="#fff6e8" />
         <directionalLight position={[-5, -3, -4]} intensity={0.3} color="#dfe6ff" />
-        <PhysicsGroup entries={entries} mode={mode} />
+        {explore ? <ExploreControls mode={mode} /> : <CameraRig mode={mode} />}
+        {mode === 'wave' ? (
+          <WaveStageHost entries={entries} />
+        ) : (
+          <PhysicsGroup entries={entries} mode={mode} disableParallax={explore} />
+        )}
       </Canvas>
     </div>
+  )
+}
+
+/**
+ * Mouse-driven camera for "explore mode". One-line drei drop:
+ *   - drag           → orbit around the target
+ *   - scroll         → dolly in/out
+ *   - right-drag     → pan the target
+ *   - touch (mobile) → 1-finger orbit, 2-finger pan + pinch zoom
+ *
+ * Polar angle is clamped just shy of straight-down/straight-up so the user
+ * can look top-down ("from above" — your specific ask) without flipping
+ * past vertical, which is disorienting and reverses the controls.
+ *
+ * Initial target moves with the mode so explore mode boots into a sensible
+ * framing for whatever's on screen (sea-floor center for wave; origin for
+ * physics modes). Once the user drags, drei tracks their target locally.
+ */
+function ExploreControls({ mode }: { mode: WallMode }) {
+  const target = useMemo<[number, number, number]>(
+    () => (mode === 'wave' ? [0, 0, -1.5] : [0, 0, 0]),
+    [mode],
+  )
+  return (
+    <OrbitControls
+      makeDefault
+      enableDamping
+      dampingFactor={0.08}
+      target={target}
+      minDistance={2}
+      maxDistance={20}
+      minPolarAngle={0.05}
+      maxPolarAngle={Math.PI - 0.05}
+    />
+  )
+}
+
+/**
+ * Smoothly lerps the camera position + look-at toward the per-mode target.
+ *
+ * Wave mode treats the world as a horizontal sea: the grid lives in the
+ * X–Z plane (Y is up). The camera lifts to ~2.6 units above the surface
+ * and points at a target in front of and below it (`(0, 0, -1.5)`), which
+ * gives roughly a 19° downward pitch — enough to make the back rows of
+ * the grid recede into a real horizon line near the upper third of the
+ * frame, instead of stacking behind the front rows. A subtle ±2° sway is
+ * layered on so the camera feels like it's drifting on a buoy.
+ *
+ * Physics modes keep the camera level facing the tank head-on at the
+ * original (0, 0, 5.8) — the same framing every previous version used.
+ */
+const CAMERA_LERP_TAU = 0.6
+const WAVE_CAMERA_Y = 2.6
+const WAVE_CAMERA_Z = 5.6
+const WAVE_LOOKAT_Y = 0.0
+const WAVE_LOOKAT_Z = -1.5
+
+function CameraRig({ mode }: { mode: WallMode }) {
+  const { camera } = useThree()
+  const lookAt = useRef(new THREE.Vector3(0, 0, 0))
+
+  useFrame((state, dt) => {
+    const wave = mode === 'wave'
+    const targetY = wave ? WAVE_CAMERA_Y : 0
+    const targetZ = wave ? WAVE_CAMERA_Z : CAMERA_Z
+    const targetLookY = wave ? WAVE_LOOKAT_Y : 0
+    const targetLookZ = wave ? WAVE_LOOKAT_Z : 0
+
+    const alpha = 1 - Math.exp(-Math.max(0, dt) / CAMERA_LERP_TAU)
+    camera.position.y += (targetY - camera.position.y) * alpha
+    camera.position.z += (targetZ - camera.position.z) * alpha
+    lookAt.current.y += (targetLookY - lookAt.current.y) * alpha
+    lookAt.current.z += (targetLookZ - lookAt.current.z) * alpha
+
+    if (wave) {
+      // ±2° sway over a slow ~24s period. The position and look-at use
+      // out-of-phase sines so the motion reads as floating on a buoy
+      // rather than a stiff pendulum.
+      const t = state.clock.elapsedTime
+      const swayDeg = 2
+      const swayRad = (swayDeg * Math.PI) / 180
+      camera.position.x = Math.sin(t * 0.13) * 0.18
+      lookAt.current.x = camera.position.x + Math.sin(t * 0.13 + 0.6) * swayRad
+    } else {
+      camera.position.x += (0 - camera.position.x) * alpha
+      lookAt.current.x += (0 - lookAt.current.x) * alpha
+    }
+
+    camera.lookAt(lookAt.current)
+  })
+
+  return null
+}
+
+/**
+ * Wraps WaveStage with the canvas size + camera info it needs to lay out
+ * its scaffold grid. We forward `useThree().size` and the constants used
+ * by the perspective camera so the grid spacing matches the visible tank.
+ */
+function WaveStageHost({ entries }: { entries: WallEntry[] }) {
+  const { size } = useThree()
+  return (
+    <WaveStage
+      entries={entries}
+      width={size.width}
+      height={size.height}
+      cameraZ={CAMERA_Z}
+      cameraFov={CAMERA_FOV}
+    />
   )
 }
 
 type PhysicsGroupProps = {
   entries: WallEntry[]
   mode: WallMode
+  /** Skip the parallax `useFrame` rotation when explore mode owns the camera. */
+  disableParallax?: boolean
 }
 
 /**
@@ -110,7 +244,7 @@ type PhysicsGroupProps = {
  * Mode is tracked via a ref so `useFrame` always reads the current value
  * without rebuilding the callback (which would briefly halt motion).
  */
-function PhysicsGroup({ entries, mode }: PhysicsGroupProps) {
+function PhysicsGroup({ entries, mode, disableParallax = false }: PhysicsGroupProps) {
   const { size, camera } = useThree()
   const reducedMotion = usePrefersReducedMotion()
 
@@ -249,14 +383,22 @@ function PhysicsGroup({ entries, mode }: PhysicsGroupProps) {
       }
     }
 
-    const p = parallax.current
-    // ~3% lerp: eases over ~1s toward mouse target. Matches Codrops feel.
-    p.cx += (p.tx - p.cx) * 0.03
-    p.cy += (p.ty - p.cy) * 0.03
-    if (groupRef.current) {
-      const amp = reducedMotion ? 0.05 : 0.18
-      groupRef.current.rotation.y = p.cx * amp
-      groupRef.current.rotation.x = p.cy * amp
+    if (!disableParallax) {
+      const p = parallax.current
+      // ~3% lerp: eases over ~1s toward mouse target. Matches Codrops feel.
+      p.cx += (p.tx - p.cx) * 0.03
+      p.cy += (p.ty - p.cy) * 0.03
+      if (groupRef.current) {
+        const amp = reducedMotion ? 0.05 : 0.18
+        groupRef.current.rotation.y = p.cx * amp
+        groupRef.current.rotation.x = p.cy * amp
+      }
+    } else if (groupRef.current) {
+      // Reset any accumulated parallax tilt so the group sits flat for
+      // OrbitControls (otherwise the user's first drag inherits a stale
+      // rotation and the scene reads as off-axis).
+      groupRef.current.rotation.x = 0
+      groupRef.current.rotation.y = 0
     }
   })
 

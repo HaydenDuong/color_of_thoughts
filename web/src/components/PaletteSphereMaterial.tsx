@@ -307,24 +307,25 @@ export function PaletteSphereMaterial({
   const matRef = useRef<THREE.ShaderMaterial | null>(null)
   const reducedMotion = usePrefersReducedMotion()
 
-  // Stable string fingerprint of the palette VALUES. Using this (instead of
-  // the `palette` array reference) as the memo dep prevents uniforms churn
-  // when realtime refetch hands us a new array with identical values.
-  // Without this, replacing material.uniforms on every refetch disconnects
-  // uTime from the compiled shader program and the animation freezes.
+  // Stable string fingerprint of the palette VALUES. We use it as a useEffect
+  // dependency (NOT as a material rebuild key) so the same compiled material
+  // can have its color/weight uniforms swapped in place when the palette
+  // changes. This is what lets wave-mode scaffold blobs shift hue smoothly
+  // as the room's calm/turbulent ratio crosses the 60/40 threshold without
+  // dropping a frame or recompiling the shader.
   const paletteKey = palette
     .map((p) => `${p.hex}:${p.weight.toFixed(4)}`)
     .join('|')
 
-  // Capture the turbulence value at mount time so the initial uniforms are
-  // already correct. Subsequent changes are applied via the `useEffect`
-  // below (which mutates `matRef.current.uniforms.*.value` in place — this
-  // is the critical bit that keeps the material program compiled and the
-  // animation running through preview updates).
+  // Capture starting values so the initial uniforms are correct on the very
+  // first frame. Subsequent updates use the in-place effects below — never
+  // replace the uniforms object, that would reset uTime and freeze the
+  // animation.
   const initialTurbulenceRef = useRef(turbulence)
+  const initialPaletteRef = useRef(palette)
 
   const { uniforms, materialKey } = useMemo(() => {
-    const { colors, weights, count } = prepareTopColors(palette)
+    const { colors, weights, count } = prepareTopColors(initialPaletteRef.current)
     const phase = seedToUnit(seed)
     const base = baseUniformValues(reducedMotion)
     const m = shaderMultipliers(initialTurbulenceRef.current, reducedMotion)
@@ -344,21 +345,19 @@ export function PaletteSphereMaterial({
       uColorCount:    { value: count },
     }
     return {
+      // Material identity is now JUST seed + reducedMotion. Palette and
+      // turbulence are mutated via the effects below so the compiled shader
+      // (and its uTime accumulator) survives every entries refetch.
       uniforms: u,
-      materialKey: `${seed}:${reducedMotion}:${paletteKey}`,
+      materialKey: `${seed}:${reducedMotion}`,
     }
-    // `palette` is read for its initial values; `paletteKey` captures the
-    // meaningful identity. `turbulence` intentionally omitted — changing it
-    // should NOT rebuild the material (would reset `uTime` and freeze the
-    // animation); the effect below mutates uniform values in place instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paletteKey, seed, reducedMotion])
+  }, [seed, reducedMotion])
 
-  // Live-update the breathing/churning uniforms when the parent changes
-  // `turbulence`. Because we write to `uniforms.*.value` (not replacing the
-  // object) three.js sees no structural change, so the compiled program and
-  // its `uTime` reference stay intact — the only way to animate smoothly
-  // across preview rating taps.
+  // Live-update the breathing/churning uniforms when `turbulence` changes.
+  // Writing to `uniforms.*.value` (not replacing the uniforms object) means
+  // three.js sees no structural change, so the compiled program and its
+  // uTime reference stay intact and the animation never hitches.
   useEffect(() => {
     const u = matRef.current?.uniforms
     if (!u) return
@@ -369,6 +368,29 @@ export function PaletteSphereMaterial({
     u.uAmp.value = base.amp * m.amp
     u.uBreathAmp.value = base.breath * m.breath
   }, [turbulence, reducedMotion])
+
+  // Live-update the palette uniforms in place. We mutate the existing color
+  // objects (and the existing weights array) rather than swapping references
+  // so the underlying GL `uniform3fv`/`uniform1fv` upload happens against
+  // the same buffer slots — avoiding the structural-change cascade that
+  // would otherwise force a fresh compile / reset uTime / freeze motion.
+  useEffect(() => {
+    const u = matRef.current?.uniforms
+    if (!u) return
+    const { colors, weights, count } = prepareTopColors(palette)
+    const dstColors = u.uColors.value as THREE.Color[]
+    const dstWeights = u.uWeights.value as number[]
+    for (let i = 0; i < MAX_COLORS; i++) {
+      dstColors[i].copy(colors[i])
+      dstWeights[i] = weights[i]
+    }
+    u.uColorCount.value = count
+    // Read paletteKey so React tracks dep changes; we already used `palette`
+    // above to compute the new uniforms. paletteKey is the stable fingerprint
+    // that prevents re-running this effect on every realtime refetch when
+    // values are identical.
+    void paletteKey
+  }, [paletteKey, palette])
 
   useFrame(({ clock }) => {
     if (!animate) return

@@ -77,7 +77,7 @@ export const DEFAULT_PHYSICS_CONFIG: PhysicsConfig = {
   reducedMotion: false,
 }
 
-export type WallMode = 'flow' | 'orbit' | 'bands'
+export type WallMode = 'flow' | 'orbit' | 'bands' | 'wave'
 
 // ---------------------------------------------------------------------------
 // Shared helpers

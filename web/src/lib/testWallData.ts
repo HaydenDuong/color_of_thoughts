@@ -92,11 +92,42 @@ function generatePalette(rng: () => number): PaletteColor[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Build `n` synthesized wall entries. `seed` controls the full set, so the
- * same `(n, seed)` pair is perfectly reproducible. Clamped to 1..200 so a
- * stray `?test=100000` URL can't melt the renderer.
+ * Forces the turbulence-rating distribution of synthesized entries. Use this
+ * to put the wave (or any rating-driven mode) into a known emotional state
+ * for QA without needing 30 real uploads. Storm factor in the wave is
+ * `(turb − calm) / (turb + calm)`, so:
+ *
+ *   - `'calm'`      — every entry rated 1 or 2 (storm = -1 → gentle swells).
+ *   - `'turbulent'` — every entry rated 4 or 5 (storm = +1 → tall fast chop).
+ *   - `'neutral'`   — every entry rated 3 (storm undefined → ambient swell,
+ *                     useful for verifying the no-polar-users path).
+ *   - `'mixed'`     — uniform random 1..5 (the original behavior; default).
  */
-export function generateTestEntries(n: number, seed = 1337): WallEntry[] {
+export type StormBias = 'calm' | 'turbulent' | 'mixed' | 'neutral'
+
+function pickRating(rng: () => number, bias: StormBias): number {
+  switch (bias) {
+    case 'calm':      return 1 + Math.floor(rng() * 2)        // 1..2
+    case 'turbulent': return 4 + Math.floor(rng() * 2)        // 4..5
+    case 'neutral':   return 3
+    case 'mixed':
+    default:          return 1 + Math.floor(rng() * 5)        // 1..5
+  }
+}
+
+/**
+ * Build `n` synthesized wall entries. `seed` controls the full set, so the
+ * same `(n, seed, bias)` triple is perfectly reproducible. Clamped to 1..200
+ * so a stray `?test=100000` URL can't melt the renderer.
+ *
+ * `bias` lets the URL force a calm- or turbulent-dominant room (see
+ * `StormBias`); default `'mixed'` matches the original random distribution.
+ */
+export function generateTestEntries(
+  n: number,
+  seed = 1337,
+  bias: StormBias = 'mixed',
+): WallEntry[] {
   const count = Math.max(1, Math.min(200, Math.round(n)))
   const rng = mulberry32(seed)
 
@@ -104,9 +135,9 @@ export function generateTestEntries(n: number, seed = 1337): WallEntry[] {
   for (let i = 0; i < count; i++) {
     const palette = generatePalette(rng)
     const primary = palette[0]
-    const rating = normalizeTurbulence(1 + Math.floor(rng() * 5))
+    const rating = normalizeTurbulence(pickRating(rng, bias))
     entries.push({
-      participantId: `test-${seed}-${i}`,
+      participantId: `test-${seed}-${bias}-${i}`,
       displayName: `Test #${i + 1}`,
       r: primary.r,
       g: primary.g,
