@@ -132,11 +132,26 @@ export type WaveParams = {
   choppiness: number
 }
 
+// Octave design — tuned so the **low-frequency octaves dominate the
+// silhouette** (~88% of the energy) and the high-frequency octaves are
+// just texture riding on top (~12%). Earlier tuning had the four octaves
+// at similar amplitudes, which meant the high-freq detail (k_eff ~ 2.6
+// at storm-end) overwhelmed the dominant swell — adjacent blobs ended
+// up ~104° apart in phase and the result looked like 60 individual
+// pogo-sticks instead of a coherent wave surface.
+//
+// Octave 0 is the dominant X-marching swell (long crest line parallel
+// to Z, wave moves left↔right). Base kx tuned so at storm-end (~1.6
+// freqScale) we see ~2 full swells across the visible X width while
+// adjacent cells stay only ~60° apart in phase (smooth gradient, not
+// scrambled). Octave 1 is a secondary Z-marching swell (long crest line
+// parallel to X, wave moves toward/away from camera). Octaves 2 and 3
+// are small high-freq diagonal detail — sea texture, not silhouette.
 const OCTAVES = [
-  { kx:  0.55, kz:  0.05, omega: 0.70, amp: 1.00, phase: 0.0 },
-  { kx:  0.05, kz:  0.45, omega: 0.55, amp: 0.65, phase: 1.7 },
-  { kx:  1.10, kz:  0.55, omega: 1.05, amp: 0.40, phase: 3.1 },
-  { kx: -0.70, kz:  0.85, omega: 0.95, amp: 0.30, phase: 4.6 },
+  { kx:  1.10, kz:  0.10, omega: 0.85, amp: 1.50, phase: 0.0 },
+  { kx:  0.05, kz:  0.85, omega: 0.75, amp: 1.00, phase: 1.7 },
+  { kx:  1.45, kz:  0.50, omega: 1.20, amp: 0.18, phase: 3.1 },
+  { kx: -0.65, kz:  1.20, omega: 1.05, amp: 0.15, phase: 4.6 },
 ] as const
 
 const OCTAVE_WEIGHT_SUM = OCTAVES.reduce((s, o) => s + o.amp, 0)
@@ -186,15 +201,23 @@ export function defaultWaveParams(): WaveParams {
 
 /**
  * Map the room's storm factor to wave params. `storm` is in [-1, +1]:
- *   -1 = all calm     → almost-glassy, very long swells, slow drift
- *    0 = balanced     → moderate visible chop (mid-energy sea)
- *   +1 = all turbulent → tall, fast, dense, peaked crests (stormy)
+ *   -1 = all calm     → almost-glassy, one giant slow swell
+ *    0 = balanced     → moderate rolling sea (mid-energy)
+ *   +1 = all turbulent → modest-height surface vibrating *fast* —
+ *                        each blob bobs up and down rapidly as the
+ *                        wave races through. Reads as agitated /
+ *                        shivering sea, not "blobs popping up".
  *
- * Spread is intentionally wide so the storm states read as obviously
- * different at a glance: amplitude grows ~24× from calm to turbulent,
- * frequency ~8× (so a stormy sea has many short waves visible at once
- * instead of one big slow swell), speed ~8×, and choppiness only kicks
- * in past 30% storm so calm/neutral stay smooth-sined.
+ * **Storm energy is encoded primarily as TEMPORAL frequency, not
+ * spatial amplitude.** Earlier tuning made turbulent waves very tall
+ * (amp 0.95) which pushed adjacent blobs to wildly different heights —
+ * the eye read that as individual blobs popping/jumping rather than as
+ * a coherent agitated sea. Real ocean chop is the opposite: modest
+ * height variation, but the surface vibrates fast (a boat in a storm
+ * gets jiggled rapidly, not lifted 5m up). So at the storm end we cap
+ * amplitude at 0.45, lower freqMax to keep neighbours synced, and
+ * crank speedMax to 3.0 — that's the dial that makes turbulent feel
+ * truly turbulent.
  *
  * Reduced-motion users get amplitude/speed/choppiness compressed.
  */
@@ -221,14 +244,22 @@ export function computeWaveParams(
   const storm = (turb - calm) / polar // -1..+1
   const t = (storm + 1) / 2 // 0..1
 
-  const ampMin = 0.04,  ampMax = 0.95
-  const freqMin = 0.28, freqMax = 2.40
-  const speedMin = 0.18, speedMax = 1.50
+  // Amplitude grows ~11× calm→turbulent (height range stays modest at
+  // turbulent end so the surface stays coherent — no popcorn).
+  // Frequency grows ~4× calm→turbulent (kept low enough that adjacent
+  // cells still ride the wave together).
+  // Speed grows ~17× calm→turbulent — this is the dominant "storm"
+  // dial. Each blob personally bobs up/down ~2.5× faster at storm-end
+  // than the previous tuning, which is what makes the sea read as
+  // agitated/vibrating instead of just tall.
+  const ampMin = 0.04,  ampMax = 0.65
+  const freqMin = 0.28, freqMax = 1.20
+  const speedMin = 0.18, speedMax = 6.50
   // Choppiness ramp: 0 below 30% storm (so calm + balanced stay smooth),
-  // 1.0 at full turbulence — combined with the sharpening coefficient
-  // above this gives sea-foam-style peaked crests.
+  // 0.6 at full turbulence — gentler than before because amplitude is
+  // also lower; over-sharpening tiny waves looks weird.
   const chopT0 = 0.30
-  const choppiness = Math.max(0, (t - chopT0) / (1 - chopT0))
+  const choppiness = Math.max(0, (t - chopT0) / (1 - chopT0)) * 0.6
 
   const params: WaveParams = {
     globalAmplitude: ampMin + t * (ampMax - ampMin),
