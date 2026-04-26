@@ -471,6 +471,7 @@ export function stepMandalaPhysics(
   dt: number,
   now: number,
   cfg: MandalaConfig,
+  scaffoldRotationY = 0,
 ): void {
   const step = Math.min(dt, cfg.maxDt)
   if (step <= 0) return
@@ -505,11 +506,34 @@ export function stepMandalaPhysics(
         b.dockIdx = claimDock(b.id, occupancy)
       }
       if (b.dockIdx != null && outOfGrace) {
-        // Spring toward dock slot.
+        // Spring toward the *rotating* dock slot. User blobs stay in
+        // world-space physics so meteors can collide with them normally,
+        // but dock targets are rotated with the scaffold. This makes
+        // docked calm blobs feel attached to the mandala surface; once
+        // knocked loose (`dockIdx = null`) they stop rotating and drift
+        // independently until they claim a new rotating slot.
         const p = dockPositions[b.dockIdx]
-        b.vx += (p.x - b.x) * cfg.dockSpring * step - b.vx * cfg.dockDamping * step
-        b.vy += (p.y - b.y) * cfg.dockSpring * step - b.vy * cfg.dockDamping * step
-        b.vz += (p.z - b.z) * cfg.dockSpring * step - b.vz * cfg.dockDamping * step
+        const c = Math.cos(scaffoldRotationY)
+        const s = Math.sin(scaffoldRotationY)
+        const targetX = p.x * c + p.z * s
+        const targetZ = -p.x * s + p.z * c
+        // Feed-forward the target's tangential velocity as it rotates.
+        // Without this, docked blobs are always damping toward zero
+        // world-space velocity and visibly trail their slot. Damping
+        // relative to the slot velocity makes calm blobs ride the
+        // rotating mandala surface instead of merely chasing it.
+        const omega = MANDALA_SCAFFOLD_OMEGA * (cfg.reducedMotion ? 0.5 : 1)
+        const targetVx = omega * targetZ
+        const targetVz = -omega * targetX
+        b.vx +=
+          (targetX - b.x) * cfg.dockSpring * step -
+          (b.vx - targetVx) * cfg.dockDamping * step
+        b.vy +=
+          (p.y - b.y) * cfg.dockSpring * step -
+          b.vy * cfg.dockDamping * step
+        b.vz +=
+          (targetZ - b.z) * cfg.dockSpring * step -
+          (b.vz - targetVz) * cfg.dockDamping * step
       } else if (b.dockIdx == null) {
         // Dock overflow (all slots full) OR still in grace — drift
         // gently toward the outer shell in the blob's current direction

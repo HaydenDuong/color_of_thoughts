@@ -38,10 +38,11 @@ import {
  *       - chaotic blobs get random impulses + a weak outward push and
  *         wander the shell space, knocking docked blobs off their slots.
  *
- *   The scaffold lives inside a rotating `<group>`, but user blobs do
- *   not (they're in world-space). That way the mandala pattern
- *   rotates as a single piece while user blobs drift / bounce
- *   independently.
+ *   The scaffold lives inside a rotating `<group>`, but user blobs stay
+ *   in world-space physics. Docked calm blobs chase dock targets that
+ *   are rotated by the same angle as the scaffold, so they visually
+ *   ride the mandala surface. Knocked-loose calm blobs and chaotic
+ *   meteors drift independently until a calm blob reclaims a dock slot.
  */
 
 const SCAFFOLD_VISUAL_SCALE = 0.26
@@ -142,20 +143,33 @@ export function MandalaStage({ entries }: MandalaStageProps) {
   // passed into physics are monotonically-increasing from the stage's
   // mount, not from the Canvas's global elapsedTime.
   const clockRef = useRef(0)
+  const scaffoldRotationRef = useRef(0)
 
   useFrame((_, dt) => {
     clockRef.current += dt
     const now = clockRef.current
 
     // Rotate scaffold group around Y. Reduced-motion → half speed.
+    // The same angle is passed into physics so docked calm blobs chase
+    // rotating dock targets, while knocked-loose / chaotic blobs remain
+    // in independent world-space motion.
+    scaffoldRotationRef.current +=
+      MANDALA_SCAFFOLD_OMEGA * dt * (reducedMotion ? 0.5 : 1)
     if (scaffoldGroupRef.current) {
-      scaffoldGroupRef.current.rotation.y +=
-        MANDALA_SCAFFOLD_OMEGA * dt * (reducedMotion ? 0.5 : 1)
+      scaffoldGroupRef.current.rotation.y = scaffoldRotationRef.current
     }
 
     // Step user-blob physics, then sync meshes.
     const list = Array.from(statesRef.current.values())
-    stepMandalaPhysics(list, dockPositions, occupancyRef.current, dt, now, config)
+    stepMandalaPhysics(
+      list,
+      dockPositions,
+      occupancyRef.current,
+      dt,
+      now,
+      config,
+      scaffoldRotationRef.current,
+    )
 
     for (const b of list) {
       const mesh = userMeshesRef.current.get(b.id)
