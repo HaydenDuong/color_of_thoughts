@@ -103,9 +103,8 @@ export function WallScene({ entries, mode = 'flow', explore = false, className }
         // Height lives in CSS (`.wall-canvas-wrap canvas`) so exhibition /
         // projector setups can override it without touching this component.
         style={{ width: '100%', touchAction: 'none' }}
-        gl={{ antialias: true, alpha: false }}
+        gl={{ antialias: true, alpha: true }}
       >
-        <color attach="background" args={['#F5EFE6']} />
         <ambientLight intensity={0.75} />
         <directionalLight position={[6, 8, 10]} intensity={0.9} color="#fff6e8" />
         <directionalLight position={[-5, -3, -4]} intensity={0.3} color="#dfe6ff" />
