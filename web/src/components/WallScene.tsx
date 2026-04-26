@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import type { WallEntry } from '../lib/wallData'
 import { PaletteSphereMaterial } from './PaletteSphereMaterial'
 import { WaveStage } from './WaveStage'
+import { MandalaStage } from './MandalaStage'
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion'
 import {
   DEFAULT_PHYSICS_CONFIG,
@@ -28,10 +29,14 @@ import {
  *       - `orbit`           : concentric orbits around the canvas center.
  *       - `bands`           : hidden 3-layer comparison mode (?mode=bands).
  *
- *   - **Scaffold modes** (`wave`): a fixed grid of "scaffold" blobs renders
- *     a coherent surface (the sea), and each user blob takes a unique cell
- *     on that grid. There is no freeform physics in these modes — position
- *     is wholly determined by the surface function + ripples.
+ *   - **Scaffold modes** (`wave`, `mandala`): a fixed set of scaffold blobs
+ *     anchors the scene; user blobs relate to that scaffold in mode-specific
+ *     ways.
+ *       - `wave`    : 12×8 grid in the X–Z plane; users take cells; surface
+ *                     function + ripples drive Y.
+ *       - `mandala` : 80-blob Fibonacci inner sphere (rotates slowly); user
+ *                     blobs have full 3-D physics — calm dock to an outer
+ *                     shell, turbulent roam and knock dockers off.
  *
  * Switching between physics modes is state-preserving (sphere objects carry
  * over). Switching INTO or OUT of a scaffold mode tears down the other
@@ -107,6 +112,8 @@ export function WallScene({ entries, mode = 'flow', explore = false, className }
         {explore ? <ExploreControls mode={mode} /> : <CameraRig mode={mode} />}
         {mode === 'wave' ? (
           <WaveStageHost entries={entries} />
+        ) : mode === 'mandala' ? (
+          <MandalaStage entries={entries} />
         ) : (
           <PhysicsGroup entries={entries} mode={mode} disableParallax={explore} />
         )}
@@ -168,6 +175,20 @@ const WAVE_CAMERA_Y = 2.6
 const WAVE_CAMERA_Z = 5.6
 const WAVE_LOOKAT_Y = 0.0
 const WAVE_LOOKAT_Z = -1.5
+/**
+ * Mandala uses a widescreen-shaped ellipsoidal meteor belt with semi-
+ * axes (X=13, Y=6, Z=9 u). Camera distance chosen so the horizontal
+ * viewport at the mandala's depth (z=0) covers ~±13 u (matching the
+ * ellipsoid's wide axis), with FOV 50° + canvas aspect ~2.2:1. That
+ * way meteors flying out to the X bounds appear at the canvas edges
+ * instead of clipping off-screen.
+ *
+ * The exhibition setup uses `?explore=1` so OrbitControls
+ * (`maxDistance=20`) handles the actual day-of framing; this constant
+ * just makes the default non-Explore view (URL share, screenshot,
+ * debug) frame the meteor belt comfortably.
+ */
+const MANDALA_CAMERA_Z = 12.0
 
 function CameraRig({ mode }: { mode: WallMode }) {
   const { camera } = useThree()
@@ -175,8 +196,9 @@ function CameraRig({ mode }: { mode: WallMode }) {
 
   useFrame((state, dt) => {
     const wave = mode === 'wave'
+    const mandala = mode === 'mandala'
     const targetY = wave ? WAVE_CAMERA_Y : 0
-    const targetZ = wave ? WAVE_CAMERA_Z : CAMERA_Z
+    const targetZ = wave ? WAVE_CAMERA_Z : mandala ? MANDALA_CAMERA_Z : CAMERA_Z
     const targetLookY = wave ? WAVE_LOOKAT_Y : 0
     const targetLookZ = wave ? WAVE_LOOKAT_Z : 0
 

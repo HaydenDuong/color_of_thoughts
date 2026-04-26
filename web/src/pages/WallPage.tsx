@@ -13,12 +13,17 @@ import '../App.css'
  * Exhibition view: all submission colors for the default room, live via Realtime.
  *
  * URL params:
- *   - `mode=flow|orbit|wave|bands` — wall mode (see WallScene). Default `flow`.
- *       - `flow`  : freeform 2D physics on a soft vertical gradient.
- *       - `orbit` : concentric orbits around the center.
- *       - `wave`  : 12×8 sea scaffold; users take cells, ride a Tessendorf
- *                   ocean. Calm/turbulent ratio drives wave height.
- *       - `bands` : hidden 3-layer comparison (URL-only).
+ *   - `mode=flow|orbit|wave|mandala|bands` — wall mode (see WallScene).
+ *       Default `flow`.
+ *       - `flow`    : freeform 2D physics on a soft vertical gradient.
+ *       - `orbit`   : concentric orbits around the center.
+ *       - `wave`    : 12×8 sea scaffold; users take cells, ride a
+ *                     Tessendorf ocean. Calm/turbulent ratio + speed drive
+ *                     how agitated the surface feels.
+ *       - `mandala` : 80-blob Fibonacci inner scaffold (rotating slowly);
+ *                     calm user blobs dock to an outer shell, turbulent
+ *                     user blobs roam and knock dockers loose.
+ *       - `bands`   : hidden 3-layer comparison (URL-only).
  *   - `test=N`         — **dev only**: skip Supabase and render `N` (1..200,
  *                        default 30) synthesized blobs with deterministic
  *                        random palettes + ratings. Never writes to the DB.
@@ -34,6 +39,15 @@ import '../App.css'
  *                        zoom, and right-drag to pan. Disables the parallax
  *                        + wave camera rig while on. Off by default so the
  *                        exhibition projector stays hands-off.
+ *   - `metFrac=N`      — **mandala only** live tuning knob for chaotic-blob
+ *                        (meteor) speed + kick frequency. Scales `chaoticImpulse`
+ *                        by ×N and impulse intervals by ÷N (so trajectory shape
+ *                        is preserved, only playback speed changes). Default
+ *                        `1.0` ships the contemplative psych-exhibition vibe
+ *                        (~6 s cross-stage). `1.5` ≈ cinematic. `2.0+` ≈
+ *                        energetic demo. `0.5` ≈ near-meditation. Clamped to
+ *                        [0.3, 3.0]. Use to scrub speed live at the venue
+ *                        without a redeploy.
  *
  * The mode and explore toggles write to the URL so refresh + side-by-side
  * tabs both work.
@@ -43,13 +57,22 @@ const VISIBLE_MODES: ReadonlyArray<{ key: WallMode; label: string; hint: string 
   { key: 'flow', label: 'Flow', hint: 'Calm flows low, turbulent drifts high' },
   { key: 'orbit', label: 'Orbit', hint: 'Concentric orbits around the center' },
   { key: 'wave', label: 'Wave', hint: 'Sea scaffold; calm/turbulent ratio drives swell' },
+  { key: 'mandala', label: 'Mandala', hint: 'Calm docks on the outer shell; turbulent knocks them loose' },
 ]
 
 const TEST_DEFAULT_COUNT = 30
 const TEST_MAX_COUNT = 200
 
 function parseMode(raw: string | null): WallMode {
-  if (raw === 'orbit' || raw === 'flow' || raw === 'bands' || raw === 'wave') return raw
+  if (
+    raw === 'orbit' ||
+    raw === 'flow' ||
+    raw === 'bands' ||
+    raw === 'wave' ||
+    raw === 'mandala'
+  ) {
+    return raw
+  }
   return 'flow'
 }
 
